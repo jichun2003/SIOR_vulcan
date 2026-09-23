@@ -1,0 +1,155 @@
+// 서보 3개 + DC모터 2개(L298N) 통합 테스트 코드 (Tinkercad 호환 버전)
+// 시리얼 모니터: 9600 baud
+//
+// [DC모터 명령]
+//   f : 전진      b : 후진
+//   l : 좌회전    r : 우회전
+//   x : 정지
+//   v150 : DC모터 목표 속도 설정 (0~255)
+//
+// [서보 명령]
+//   s1 90 : 서보1(D2)을 90도로
+//   s2 45 : 서보2(D3)을 45도로
+//   s3 120: 서보3(D9)을 120도로
+//   c     : 서보 3개 모두 90도(중앙)
+
+#include <Servo.h>
+
+// ---------- DC모터 (L298N) ----------
+const int ENA = 5;   // 모터 A 속도 (PWM)
+const int IN1 = 7;
+const int IN2 = 8;
+const int ENB = 6;   // 모터 B 속도 (PWM)
+const int IN3 = 11;
+const int IN4 = 12;
+
+const int MAX_SPEED  = 255;  // 전원 전압이 높으면 낮추세요 (예: 14V 전원이면 120)
+const int RAMP_DELAY = 12;   // 속도 1 올릴 때마다 간격(ms) → 0→255 약 3초
+
+int targetSpeed = 200;
+int curSpeed = 0;
+int dirA = 0, dirB = 0;      // 1 정방향, -1 역방향, 0 정지
+unsigned long lastRamp = 0;
+
+// ---------- 서보 ----------
+const int SERVO_PINS[3] = {2, 3, 9};
+Servo servos[3];
+
+// ---------- DC모터 함수 ----------
+void setDir(int in1, int in2, int dir) {
+  digitalWrite(in1, dir == 1 ? HIGH : LOW);
+  digitalWrite(in2, dir == -1 ? HIGH : LOW);
+}
+
+void applySpeed() {
+  analogWrite(ENA, dirA == 0 ? 0 : curSpeed);
+  analogWrite(ENB, dirB == 0 ? 0 : curSpeed);
+}
+
+void setMotion(int a, int b) {
+  curSpeed = 0;
+  applySpeed();
+  dirA = a;
+  dirB = b;
+  setDir(IN1, IN2, dirA);
+  setDir(IN3, IN4, dirB);
+}
+
+void stopMotors() {
+  curSpeed = 0;
+  dirA = dirB = 0;
+  applySpeed();
+  setDir(IN1, IN2, 0);
+  setDir(IN3, IN4, 0);
+}
+
+void updateRamp() {
+  if (dirA == 0 && dirB == 0) return;
+  if (curSpeed > targetSpeed) {
+    curSpeed = targetSpeed;
+    applySpeed();
+  } else if (curSpeed < targetSpeed && millis() - lastRamp >= RAMP_DELAY) {
+    lastRamp = millis();
+    curSpeed++;
+    applySpeed();
+  }
+}
+
+// ---------- 명령 처리 ----------
+void handleCommand(String input) {
+  if      (input == "f") { setMotion(1, 1);   Serial.println(F("Forward")); }
+  else if (input == "b") { setMotion(-1, -1); Serial.println(F("Backward")); }
+  else if (input == "l") { setMotion(-1, 1);  Serial.println(F("Turn left")); }
+  else if (input == "r") { setMotion(1, -1);  Serial.println(F("Turn right")); }
+  else if (input == "x") { stopMotors();      Serial.println(F("Stop")); }
+
+  else if (input.startsWith("v")) {
+    String num = input.substring(1);
+    num.trim();
+    int v = num.toInt();
+    if (num.length() > 0 && isDigit(num[0]) && v >= 0 && v <= MAX_SPEED) {
+      targetSpeed = v;
+      Serial.print(F("DC target speed: "));
+      Serial.println(targetSpeed);
+    } else {
+      Serial.println(F("Speed range error (ex: v150)"));
+    }
+  }
+
+  else if (input.startsWith("s") && input.length() >= 2) {
+    int idx = input.charAt(1) - '1';
+    String num = input.substring(2);
+    num.trim();
+    int angle = num.toInt();
+    if (idx < 0 || idx > 2) {
+      Serial.println(F("Servo number is 1~3 (ex: s1 90)"));
+    } else if (num.length() == 0 || !isDigit(num[0]) || angle < 0 || angle > 180) {
+      Serial.println(F("Angle is 0~180 (ex: s1 90)"));
+    } else {
+      servos[idx].write(angle);
+      Serial.print(F("Servo"));
+      Serial.print(idx + 1);
+      Serial.print(F(" (D"));
+      Serial.print(SERVO_PINS[idx]);
+      Serial.print(F(") -> "));
+      Serial.println(angle);
+    }
+  }
+
+  else if (input == "c") {
+    for (int i = 0; i < 3; i++) servos[i].write(90);
+    Serial.println(F("All servos 90"));
+  }
+
+  else {
+    Serial.print(F("Unknown command: "));
+    Serial.println(input);
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.setTimeout(50);   // 줄바꿈이 없어도 50ms 후 입력 처리 (Tinkercad 대응)
+
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(ENB, OUTPUT); pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  stopMotors();
+
+  for (int i = 0; i < 3; i++) {
+    servos[i].attach(SERVO_PINS[i]);
+    servos[i].write(90);
+  }
+
+  Serial.println(F("=== Servo + DC Test ==="));
+  Serial.println(F("DC: f/b/l/r/x, v150(speed)"));
+  Serial.println(F("Servo: s1 90, s2 45, s3 120, c(center)"));
+}
+
+void loop() {
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input.length() > 0) handleCommand(input);
+  }
+  updateRamp();
+}
