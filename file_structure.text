@@ -1,0 +1,12 @@
+| 파일 | 역할 |
+| --- | --- |
+| main.py | 구조 연결. 진입점. 인자 파싱, 모듈 생성, 메인 루프, 키 입력(q/r/ready), 오버레이·FPS, CSV 로그 |
+| vision.py | 카메라, YOLO 추론, 표적 선택(클래스 필터, 위치 급변 방지) |
+| track_target.py | 픽셀→각도, 표적 방위각·거리(bbox)·위치·속도, 목표각−현재 서보각 (영점, 선도각, 속도 피드포워드 반영) |
+| turret_control.py | 2축 PID(PID 클래스 포함), 서보각 관리·한계, 놓침 처리, 리셋 |
+| fire_control.py | lead_solver 호출(주기 조절, 해 없으면 이전 값), 선도각→보정값, 조준 완료 판단, ready 후 예측 조준, 사격 명령 |
+| serial_link.py | 아두이노 통신 (서보 각도, 피더·플라이휠 명령, 응답 수신) |
+| config.py | 가변 파라미터, main이 각 모듈에 전달 |
+| model_control.ino | 명령 파싱, 서보 목표각·한계, 슬루레이트(15ms당 1°), 플라이휠 속도 램프, 응답 출력 |
+| *ballistic_model_fit.py | (루프 전) 발사 영상 궤적 추출 → 항력 포함 방정식 피팅 → v0·Cd → json 저장 |
+| lead_solver.py | (fire_control이 호출) 탄도 방정식(중력+항력), 거리·높이차 → 발사각·비행시간, 위치·속도 → 선도각(yaw, pitch) |
