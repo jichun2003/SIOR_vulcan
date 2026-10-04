@@ -2,8 +2,8 @@
 """
 실험계획 2단계: YOLO 기반 단일 표적 자율 추적 (2축 pan/tilt PID 제어) + 리드샷(선도각)
 진입점. 인자 파싱, 각 모듈(vision/track_target/turret_control/fire_control/serial_link)
-생성과 연결, 메인 루프, 키 입력(q=종료, r=리셋, 콘솔에 "ready" 입력 시 3초 뒤 예측 사격),
-화면 오버레이·FPS 표시, CSV 로그를 담당한다.
+생성과 연결, 메인 루프, 키 입력(q=종료, r=리셋, 콘솔에 "shot" 입력 시 계속 추적하며
+선도각 계산+조준이 완료되는 즉시 사격), 화면 오버레이·FPS 표시, CSV 로그를 담당한다.
 
 사용 예:
     python main.py --model ../checkpoint/best.pt --camera 0 --port /dev/tty.usbmodem14101
@@ -14,10 +14,10 @@
     # 거리/크기별 실험 로그 저장 (근거리/원거리 비교 등)
     python main.py --model ../checkpoint/best.pt --no-serial --log-csv logs/near_small.csv
 
-    # 탄도 모델(ballistic/lead_solver.py)을 연결해 리드샷(선도각) 계산 + ready 예측 사격
+    # 탄도 모델(ballistic/lead_solver.py)을 연결해 리드샷(선도각) 계산 + shot 즉시 사격
     python main.py --model ../checkpoint/best.pt --no-serial \
         --ballistic-json ballistic/ballistic_model.json --target-width-m 0.03
-    (실행 중 터미널에 "ready" 입력 후 엔터 -> 3초 뒤 예측 위치로 조준 완료되면 자동 사격)
+    (실행 중 터미널에 "shot" 입력 후 엔터 -> 계속 추적하며 조준(선도각) 완료되는 즉시 자동 사격)
 """
 
 import argparse
@@ -72,11 +72,10 @@ def parse_args():
     p.add_argument(
         "--ballistic-json", default=None,
         help="ballistic/ballistic_model_fit.py로 만든 v0/Cd json 경로. 지정하면 리드샷(선도각)"
-             " + ready 예측 사격 모드가 활성화됨",
+             " + shot 즉시 사격 모드가 활성화됨",
     )
     p.add_argument("--target-width-m", type=float, default=None, help="--ballistic-json 사용 시 필수")
     p.add_argument("--lead-solve-interval", type=float, default=0.2, help="리드샷 재계산 주기(초)")
-    p.add_argument("--ready-prepare-seconds", type=float, default=3.0, help="ready 수신 후 사격까지 대기 시간(초)")
     p.add_argument("--flywheel-speed", type=int, default=200, help="사격 시 플라이휠 목표 속도(0~255)")
 
     p.add_argument(
@@ -105,7 +104,6 @@ def build_config(args):
         ballistic_json=args.ballistic_json,
         target_width_m=args.target_width_m,
         lead_solve_interval=args.lead_solve_interval,
-        ready_prepare_seconds=args.ready_prepare_seconds,
         flywheel_speed=args.flywheel_speed,
         serial_port=args.port,
         serial_baud=args.baud,
@@ -115,9 +113,9 @@ def build_config(args):
     )
 
 
-class StdinReadyListener:
-    """메인 루프를 막지 않고 터미널에 "ready" 입력을 감지하는 백그라운드 스레드.
-    CLAUDE.md 실험계획: "사용자가 'ready' 프롬프트를 보내면 3초 뒤의 위치를 예측"."""
+class StdinShotListener:
+    """메인 루프를 막지 않고 터미널에 "shot" 입력을 감지하는 백그라운드 스레드.
+    "shot" 입력 후에도 계속 추적하며, 선도각 계산+조준이 완료되는 즉시 사격한다."""
 
     def __init__(self):
         self._event = threading.Event()
@@ -126,7 +124,7 @@ class StdinReadyListener:
 
     def _listen(self):
         for line in sys.stdin:
-            if line.strip().lower() == "ready":
+            if line.strip().lower() == "shot":
                 self._event.set()
 
     def consume(self):
@@ -137,7 +135,7 @@ class StdinReadyListener:
 
 
 def draw_overlay(frame, target, frame_cx, frame_cy, pan_angle, tilt_angle, fps,
-                  lead_solution=None, ready_countdown=None):
+                  lead_solution=None, shot_armed=False):
     h, _ = frame.shape[:2]
     cv2.drawMarker(
         frame, (int(frame_cx), int(frame_cy)), (0, 255, 255),
@@ -167,9 +165,9 @@ def draw_overlay(frame, target, frame_cx, frame_cy, pan_angle, tilt_angle, fps,
         )
         cv2.putText(frame, lead_status, (10, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2)
 
-    if ready_countdown is not None:
+    if shot_armed:
         cv2.putText(
-            frame, f"READY: {ready_countdown:.1f}s", (10, 30),
+            frame, "SHOT ARMED: aiming...", (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,
         )
 
@@ -183,7 +181,7 @@ def main():
         if cfg.target_width_m is None:
             raise ValueError("--ballistic-json을 쓰려면 --target-width-m(표적 실제 폭, m)도 지정해야 합니다")
         fire_control = FireControl(cfg)
-        print('콘솔에 "ready" 입력 후 엔터 -> 3초 뒤 예측 위치로 조준 완료 시 자동 사격')
+        print('콘솔에 "shot" 입력 후 엔터 -> 계속 추적하며 조준(선도각) 완료되는 즉시 자동 사격')
 
     camera = Camera(cfg.camera_index, cfg.frame_width, cfg.frame_height)
     detector = Detector(cfg.model_path, cfg.conf_threshold, cfg.target_class)
@@ -197,7 +195,7 @@ def main():
             raise ValueError("--no-serial을 쓰지 않으려면 --port로 아두이노 포트를 지정해야 합니다")
         link = TurretSerialLink(cfg.serial_port, cfg.serial_baud)
 
-    ready_listener = StdinReadyListener() if fire_control is not None else None
+    shot_listener = StdinShotListener() if fire_control is not None else None
 
     last_center = None
     log_file = None
@@ -210,7 +208,7 @@ def main():
         log_writer.writerow([
             "timestamp", "found", "conf", "cls_name", "bbox_w", "bbox_h", "bbox_area",
             "err_x_px", "err_y_px", "pan_angle", "tilt_angle",
-            "range_m", "lead_yaw_deg", "lead_pitch_deg", "ready_pending", "fired",
+            "range_m", "lead_yaw_deg", "lead_pitch_deg", "shot_armed", "fired",
         ])
 
     prev_time = time.monotonic()
@@ -232,8 +230,8 @@ def main():
             now = time.monotonic()
             timestamp = time.time()
 
-            if ready_listener is not None and ready_listener.consume():
-                fire_control.trigger_ready(now)
+            if shot_listener is not None and shot_listener.consume():
+                fire_control.trigger_shot()
 
             lead_solution = None
             fired = False
@@ -274,13 +272,13 @@ def main():
                     aim_locked = fire_control.aim_complete(
                         lead_solution, pan_angle, tilt_angle, cfg.pan_center_deg, cfg.tilt_center_deg
                     )
-                    if fire_control.should_fire(now, aim_locked):
+                    if fire_control.should_fire(aim_locked):
                         link.send_fire(cfg.flywheel_speed, cfg.feeder_push_deg, cfg.feeder_rest_deg)
                         fired = True
                         print("[fire_control] 사격!")
 
                 if log_writer:
-                    ready_pending = fire_control.is_ready_pending() if fire_control is not None else False
+                    shot_armed = fire_control.is_shot_armed() if fire_control is not None else False
                     log_writer.writerow([
                         timestamp, 1, f"{target['conf']:.3f}", target["cls_name"],
                         f"{target['w']:.1f}", f"{target['h']:.1f}", f"{target['w'] * target['h']:.1f}",
@@ -288,7 +286,7 @@ def main():
                         f"{range_m:.3f}" if range_m else "",
                         f"{lead_solution['yaw_deg']:.2f}" if lead_solution else "",
                         f"{lead_solution['pitch_deg']:.2f}" if lead_solution else "",
-                        int(ready_pending), int(fired),
+                        int(shot_armed), int(fired),
                     ])
             else:
                 just_reset = turret.handle_lost()
@@ -309,13 +307,9 @@ def main():
                 fps = 0.9 * fps + 0.1 * (1.0 / dt)
 
             if not cfg.no_show:
-                ready_countdown = (
-                    fire_control.remaining_ready_s(now)
-                    if fire_control is not None and fire_control.is_ready_pending()
-                    else None
-                )
+                shot_armed = fire_control.is_shot_armed() if fire_control is not None else False
                 draw_overlay(frame, target, frame_cx, frame_cy, turret.pan_angle, turret.tilt_angle,
-                             fps, lead_solution, ready_countdown)
+                             fps, lead_solution, shot_armed)
                 cv2.imshow("SIOR - Stage2 Target Tracking", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):

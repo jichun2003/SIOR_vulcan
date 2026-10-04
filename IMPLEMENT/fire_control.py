@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 ballistic/lead_solver.py(BallisticModel) 호출 주기 조절, 선도각->보정값 변환,
-조준 완료 판단, "ready" 명령 이후 예측 사격(3초 뒤 위치를 예측해 조준하다가
-조준이 완료되면 사격)을 담당한다.
-
-CLAUDE.md 실험계획 2단계: "표적을 따라 포의 헤드 부분이 추적하다가 사용자가
-'ready' 프롬프트를 보내면 3초 뒤의 위치를 예측하여 준비 후 사격한다."
+조준 완료 판단, "shot" 명령 이후 즉시 사격(미래 위치를 미리 예측하지 않고,
+계속 추적하며 선도각 계산+조준이 완료되는 즉시 사격)을 담당한다.
 """
 
 import sys
@@ -21,27 +18,22 @@ class FireControl:
         self.model = BallisticModel.from_json(config.ballistic_json)
         self._last_solve_time = 0.0
         self._cached_solution = None
-        self._ready_deadline = None
-        self._fired_for_current_ready = False
+        self._shot_armed = False
+        self._fired_for_current_shot = False
         print(f"리드샷 모드 활성화: {self.model}")
 
-    # ---------- ready 명령 ----------
-    def trigger_ready(self, now):
-        self._ready_deadline = now + self.cfg.ready_prepare_seconds
-        self._fired_for_current_ready = False
-        print(f"[fire_control] ready 수신: {self.cfg.ready_prepare_seconds:.1f}초 뒤 예측 사격 준비")
+    # ---------- shot 명령 ----------
+    def trigger_shot(self):
+        self._shot_armed = True
+        self._fired_for_current_shot = False
+        print("[fire_control] shot 수신: 계속 추적하며 조준 완료되는 즉시 사격")
 
-    def cancel_ready(self):
-        self._ready_deadline = None
-        self._fired_for_current_ready = False
+    def cancel_shot(self):
+        self._shot_armed = False
+        self._fired_for_current_shot = False
 
-    def is_ready_pending(self):
-        return self._ready_deadline is not None
-
-    def remaining_ready_s(self, now):
-        if self._ready_deadline is None:
-            return None
-        return max(self._ready_deadline - now, 0.0)
+    def is_shot_armed(self):
+        return self._shot_armed
 
     # ---------- 선도각 계산 (주기 조절 + 해 없으면 이전 값 유지) ----------
     def solve(self, now, turret_pos, target_pos, target_velocity):
@@ -49,19 +41,10 @@ class FireControl:
             return self._cached_solution
         self._last_solve_time = now
 
-        aim_target_pos = target_pos
-        if self._ready_deadline is not None:
-            # ready 이후에는 화면에 보이는 현재 위치가 아니라, 등속 가정으로 외삽한
-            # "사격 시점(ready_deadline)의 예측 위치"를 조준 목표로 삼는다.
-            lookahead = max(self._ready_deadline - now, 0.0)
-            aim_target_pos = tuple(
-                p + v * lookahead for p, v in zip(target_pos, target_velocity)
-            )
-
         try:
             solution = self.model.solve_lead_angle(
                 turret_pos=turret_pos,
-                target_pos=aim_target_pos,
+                target_pos=target_pos,
                 target_velocity=target_velocity,
             )
         except ValueError:
@@ -82,16 +65,16 @@ class FireControl:
             and abs(tilt_setpoint - tilt_angle) <= self.cfg.aim_tolerance_deg
         )
 
-    # ---------- ready 마감 도달 + 조준 완료 시 사격 트리거 (1회성) ----------
-    def should_fire(self, now, aim_locked):
-        if self._ready_deadline is None or self._fired_for_current_ready:
+    # ---------- shot 대기 중 조준 완료되는 즉시 사격 트리거 (1회성) ----------
+    def should_fire(self, aim_locked):
+        if not self._shot_armed or self._fired_for_current_shot:
             return False
-        if now < self._ready_deadline or not aim_locked:
+        if not aim_locked:
             return False
-        self._fired_for_current_ready = True
+        self._fired_for_current_shot = True
         return True
 
     def reset(self):
         self._cached_solution = None
         self._last_solve_time = 0.0
-        self.cancel_ready()
+        self.cancel_shot()

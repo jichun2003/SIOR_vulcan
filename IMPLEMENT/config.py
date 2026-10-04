@@ -56,7 +56,6 @@ class Config:
     target_width_m: float = None
     lead_solve_interval: float = 0.2
     aim_tolerance_deg: float = 1.5
-    ready_prepare_seconds: float = 3.0
     flywheel_speed: int = 200
     feeder_push_deg: float = 150.0
     feeder_rest_deg: float = 30.0
