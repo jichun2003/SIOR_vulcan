@@ -2,7 +2,7 @@
 """
 실험계획 2단계: YOLO 기반 단일 표적 자율 추적 (2축 pan/tilt PID 제어) + 리드샷(선도각)
 진입점. 인자 파싱, 각 모듈(vision/track_target/turret_control/fire_control/serial_link)
-생성과 연결, 메인 루프, 키 입력(q=종료, r=리셋, 콘솔에 "shot" 입력 시 계속 추적하며
+생성과 연결, 메인 루프, 키 입력(q=종료, r=리셋, s=현재 원본 프레임 저장, 콘솔에 "shot" 입력 시 계속 추적하며
 선도각 계산+조준이 완료되는 즉시 사격), 화면 오버레이·FPS 표시, CSV 로그를 담당한다.
 
 사용 예:
@@ -35,6 +35,9 @@ from serial_link import DummyLink, TurretSerialLink
 from track_target import TargetTracker
 from turret_control import TurretControl
 from vision import Camera, Detector, pick_target
+
+# s 키로 저장하는 실시간 원본 프레임 (오버레이 없음) - 실패 장면을 모아 재학습에 쓰기 위함
+CAPTURE_DIR = Path(__file__).resolve().parent.parent / "dataset" / "live_capture"
 
 
 def parse_args():
@@ -308,12 +311,19 @@ def main():
 
             if not cfg.no_show:
                 shot_armed = fire_control.is_shot_armed() if fire_control is not None else False
+                raw_frame = frame.copy()
                 draw_overlay(frame, target, frame_cx, frame_cy, turret.pan_angle, turret.tilt_angle,
                              fps, lead_solution, shot_armed)
                 cv2.imshow("SIOR - Stage2 Target Tracking", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
+                if key == ord("s"):
+                    CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+                    tag = "det" if target is not None else "miss"
+                    out = CAPTURE_DIR / f"{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}_{tag}.jpg"
+                    cv2.imwrite(str(out), raw_frame)
+                    print(f"프레임 저장: {out}")
                 if key == ord("r"):
                     turret.reset()
                     last_center = None
