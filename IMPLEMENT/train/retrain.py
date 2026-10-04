@@ -1,48 +1,51 @@
 # -*- coding: utf-8 -*-
 """
-Roboflow COCO export -> YOLO 형식 변환 후 YOLOv8 재학습.
+Roboflow COCO export(여러 개) -> YOLO 형식 변환 후 YOLOv8 재학습.
 
 기존 학습(best0928.pt)의 문제점과 대응:
-  1) 연속 촬영 프레임이 train/val에 무작위로 섞여 val mAP50=0.995로 부풀려짐
-     -> 원본 파일명 순서대로 --val-block장씩 묶어 블록 단위로 val을 떼어냄
-  2) Roboflow COCO가 프로젝트명 상위 클래스(Target)를 추가해 클래스가 2개로 갈림
+  1) 연속 촬영 프레임·증강 사본이 train/val에 섞여 val mAP50=0.995로 부풀려짐
+     -> 거의 같은 이미지(dHash)와 같은 원본의 사본을 한 묶음으로 만들어 묶음 단위로 분할
+  2) 같은 이미지가 여러 export(v1, v3)에 중복 포함됨
+     -> export 간 거의 같은 이미지는 하나만 남김
+  3) Roboflow COCO가 프로젝트명 상위 클래스를 추가해 클래스가 2개로 갈림
      -> 모든 bbox를 단일 클래스 'target'으로 통합
-  3) 실제 실험 환경(어수선한 배경)에서 일반화 부족
+  4) 실제 실험 환경에서 일반화 부족
      -> 표적이 없는 배경 이미지/영상(--negatives-dir/--negatives-video)을 빈 라벨로 추가,
-        더 큰 모델(yolov8s)·해상도(960)·강한 색/스케일 증강
+        yolov8s + 강한 색/스케일 증강
 
-사용 예 (Roboflow에서 COCO로 export한 폴더: train/valid/test 각각 _annotations.coco.json 포함):
-    python train/retrain.py --coco-dir ~/Downloads/vulcan-coco \
-        --negatives-video ~/Downloads/empty_room.mp4
+사용 예 (--coco-dir 아래 모든 _annotations.coco.json을 찾아 합침):
+    python IMPLEMENT/train/retrain.py --coco-dir coco --negatives-video empty_room.mp4
 """
 
 import argparse
 import json
 import random
 import shutil
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 ROOT = Path(__file__).resolve().parents[2]
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+DUP_BITS = 2      # export 간 이 비트 수 이하로 다르면 같은 이미지로 보고 제거
+GROUP_BITS = 3    # 이 비트 수 이하로 다르면 같은 묶음(연속 프레임)으로 보고 train/val을 함께 배정
 
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--coco-dir", required=True, help="Roboflow COCO export 폴더")
+    p.add_argument("--coco-dir", required=True, help="Roboflow COCO export들이 들어있는 폴더")
     p.add_argument("--negatives-dir", default=None, help="표적이 없는 배경 이미지 폴더")
     p.add_argument("--negatives-video", default=None, help="표적이 없는 배경 영상 (프레임 추출해 사용)")
     p.add_argument("--negatives-every", type=int, default=15, help="배경 영상에서 N프레임마다 1장 추출")
     p.add_argument("--out-dir", default=str(ROOT / "dataset" / "yolo_retrain"))
     p.add_argument("--val-frac", type=float, default=0.2)
-    p.add_argument("--val-block", type=int, default=40, help="연속 프레임을 이 개수씩 묶어 블록 단위로 분할")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--model", default="yolov8s.pt")
-    p.add_argument("--imgsz", type=int, default=960)
+    p.add_argument("--imgsz", type=int, default=640, help="Roboflow export가 512/640이라 그 이상은 업스케일일 뿐")
     p.add_argument("--epochs", type=int, default=150)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--device", default="mps")
@@ -50,36 +53,97 @@ def parse_args():
     return p.parse_args()
 
 
-def original_name(file_name):
-    # Roboflow는 "img_0012_jpg.rf.<hash>.jpg" 형태로 이름을 바꾸므로 원본 순서를 복원
-    return Path(file_name).name.split(".rf.")[0]
-
-
 def load_coco(coco_dir):
-    """train/valid/test 분할을 모두 합쳐 [(이미지경로, w, h, [bbox...])] 반환."""
+    """모든 export의 모든 분할을 합쳐 dict 리스트로 반환."""
+    coco_dir = Path(coco_dir)
     items = []
-    for ann_path in sorted(Path(coco_dir).rglob("_annotations.coco.json")):
+    for ann_path in sorted(coco_dir.rglob("_annotations.coco.json")):
+        project = ann_path.relative_to(coco_dir).parts[0]
         data = json.loads(ann_path.read_text())
         boxes = defaultdict(list)
         for a in data["annotations"]:
             boxes[a["image_id"]].append(a["bbox"])
         for img in data["images"]:
-            items.append((ann_path.parent / img["file_name"], img["width"], img["height"], boxes[img["id"]]))
+            items.append({
+                "project": project,
+                "path": ann_path.parent / img["file_name"],
+                "w": img["width"], "h": img["height"],
+                "bboxes": boxes[img["id"]],
+                # Roboflow는 "img_0012_jpg.rf.<hash>.jpg"로 이름을 바꾸므로 원본 이름을 복원
+                "orig": img["file_name"].split(".rf.")[0],
+            })
     if not items:
         raise RuntimeError(f"_annotations.coco.json을 찾지 못했습니다: {coco_dir}")
     return items
 
 
-def block_split(items, val_frac, block, seed):
-    items = sorted(items, key=lambda it: original_name(it[0].name))
-    blocks = [items[i:i + block] for i in range(0, len(items), block)]
+def dhash_bits(path):
+    g = cv2.resize(cv2.imread(str(path), cv2.IMREAD_GRAYSCALE), (9, 8), interpolation=cv2.INTER_AREA)
+    return (g[:, 1:] > g[:, :-1]).ravel()
+
+
+def dedupe_and_group(items):
+    bits = np.array([dhash_bits(it["path"]) for it in items], dtype=bool)
+    n = len(items)
+
+    # 1) export 간 중복 제거 (앞서 나온 쪽을 유지)
+    keep = np.ones(n, dtype=bool)
+    for i in range(n):
+        if not keep[i]:
+            continue
+        d = (bits[i + 1:] != bits[i]).sum(1)
+        for j in np.nonzero(d <= DUP_BITS)[0] + i + 1:
+            if keep[j] and items[j]["project"] != items[i]["project"]:
+                keep[j] = False
+    removed = Counter(items[j]["project"] for j in range(n) if not keep[j])
+    items = [it for it, k in zip(items, keep) if k]
+    bits = bits[keep]
+    n = len(items)
+
+    # 2) 같은 원본 이름(같은 export) 또는 거의 같은 이미지끼리 union-find로 묶음
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    first_by_name = {}
+    for i, it in enumerate(items):
+        key = (it["project"], it["orig"])
+        if key in first_by_name:
+            union(first_by_name[key], i)
+        else:
+            first_by_name[key] = i
+        d = (bits[i + 1:] != bits[i]).sum(1)
+        for j in np.nonzero(d <= GROUP_BITS)[0] + i + 1:
+            union(i, j)
+
+    groups = defaultdict(list)
+    for i, it in enumerate(items):
+        groups[find(i)].append(it)
+    return items, list(groups.values()), removed
+
+
+def group_split(groups, val_frac, seed):
     rng = random.Random(seed)
-    order = list(range(len(blocks)))
-    rng.shuffle(order)
-    n_val = max(1, round(len(blocks) * val_frac))
-    val_ids = set(order[:n_val])
-    train = [it for i, b in enumerate(blocks) if i not in val_ids for it in b]
-    val = [it for i, b in enumerate(blocks) if i in val_ids for it in b]
+    groups = groups[:]
+    rng.shuffle(groups)
+    total = sum(len(g) for g in groups)
+    target = total * val_frac
+    train, val = [], []
+    for g in groups:
+        # 너무 큰 묶음 하나가 val을 독차지하지 않도록, 넣었을 때 목표를 크게 넘으면 train으로
+        if len(val) < target and len(val) + len(g) <= target * 1.2:
+            val += g
+        else:
+            train += g
     return train, val
 
 
@@ -88,11 +152,13 @@ def write_split(items, out_dir, split):
     lbl_dir = out_dir / "labels" / split
     img_dir.mkdir(parents=True, exist_ok=True)
     lbl_dir.mkdir(parents=True, exist_ok=True)
-    for src, w, h, bboxes in items:
-        dst = img_dir / src.name
+    for k, it in enumerate(items):
+        src = it["path"]
+        dst = img_dir / f"{k:05d}_{src.name}"
         shutil.copy2(src, dst)
+        w, h = it["w"], it["h"]
         lines = []
-        for x, y, bw, bh in bboxes:
+        for x, y, bw, bh in it["bboxes"]:
             if bw <= 0 or bh <= 0:
                 continue
             lines.append(f"0 {(x + bw / 2) / w:.6f} {(y + bh / 2) / h:.6f} {bw / w:.6f} {bh / h:.6f}")
@@ -117,7 +183,7 @@ def collect_negatives(neg_dir, neg_video, every, tmp_dir):
                 paths.append(out)
             idx += 1
         cap.release()
-    return [(p, 1, 1, []) for p in paths]
+    return [{"path": p, "w": 1, "h": 1, "bboxes": []} for p in paths]
 
 
 def main():
@@ -126,8 +192,13 @@ def main():
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
-    items = load_coco(args.coco_dir)
-    train, val = block_split(items, args.val_frac, args.val_block, args.seed)
+    raw = load_coco(args.coco_dir)
+    items, groups, removed = dedupe_and_group(raw)
+    print(f"원본 {len(raw)}장 -> export 간 중복 {len(raw) - len(items)}장 제거 {dict(removed)}")
+    sizes = sorted((len(g) for g in groups), reverse=True)
+    print(f"{len(items)}장을 {len(groups)}개 묶음으로 그룹화 (가장 큰 묶음: {sizes[:5]})")
+
+    train, val = group_split(groups, args.val_frac, args.seed)
 
     negatives = collect_negatives(args.negatives_dir, args.negatives_video, args.negatives_every,
                                   out_dir / "_neg_frames")
