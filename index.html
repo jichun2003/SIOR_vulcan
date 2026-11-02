@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autonomous Tracking Turret</title>
+<style>
+:root{
+  /* drafting-sheet palette: paper, ink, grid, signal */
+  --paper:#ffffff;
+  --ink:#1b2a3a;
+  --ink-soft:#4b5b6b;
+  --grid:#dfe3dc;
+  --rule:#b9c2bd;
+  --signal:#1d5fd1;
+  --font-body:"Times New Roman", Times, serif;
+  --font-mono:"Times New Roman", Times, serif;
+  /* layout: text column left, small sticky exploded-view plate right */
+  color-scheme: light;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#ffffff}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--font-body);
+  font-size:16px;
+  line-height:1.65;
+}
+.sheet{
+  max-width:1120px;
+  margin:0 auto;
+  padding:40px 24px 56px;
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  max-width:820px;
+  gap:40px;
+  align-items:start;
+}
+main{display:flex;flex-direction:column;gap:40px;min-width:0}
+h1,h2,h3{text-wrap:balance;margin:0}
+.mono{font-family:var(--font-mono)}
+.eyebrow{
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;
+  color:var(--ink-soft);text-transform:uppercase;
+  display:flex;gap:16px;flex-wrap:wrap;
+}
+.eyebrow span+span::before{content:"/";margin-right:16px;color:var(--rule)}
+header{display:flex;flex-direction:column;gap:16px}
+h1{font-size:clamp(30px,4.4vw,44px);line-height:1.2;font-weight:700;letter-spacing:-.01em}
+h1 em{font-style:normal;color:var(--signal)}
+.lede{max-width:62ch;font-size:17px;color:var(--ink);margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.chips li{
+  font-family:var(--font-mono);font-size:12.5px;
+  border:1px solid var(--ink);padding:3px 10px;background:var(--paper);
+}
+section{display:flex;flex-direction:column;gap:16px}
+h2{
+  font-size:13px;font-family:var(--font-mono);font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-soft);
+  display:flex;align-items:center;gap:12px;
+}
+h2::after{content:"";flex:1;border-top:1px solid var(--rule)}
+p{margin:0;max-width:65ch}
+
+/* pipeline */
+.pipe{
+  display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;
+  border:1px solid var(--ink);background:var(--paper);
+}
+.pipe div{padding:12px 12px 14px;border-right:1px solid var(--rule);display:flex;flex-direction:column;gap:4px;position:relative}
+.pipe div:last-child{border-right:0}
+.pipe b{font-size:14px}
+.pipe small{font-size:12.5px;color:var(--ink-soft);line-height:1.45}
+.pipe .n{font-family:var(--font-mono);font-size:11px;color:var(--signal)}
+
+/* state machine */
+.fsm{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-family:var(--font-mono);font-size:13px}
+.fsm .st{border:1px solid var(--ink);padding:6px 12px;background:var(--paper)}
+.fsm .st.hot{background:var(--ink);color:var(--paper)}
+.fsm .ar{color:var(--ink-soft);font-size:12px}
+
+/* module table */
+.mods{width:100%;border-collapse:collapse;font-size:14.5px;background:var(--paper)}
+.mods th,.mods td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+.mods th{font-family:var(--font-mono);font-weight:500;font-size:12px;color:var(--ink-soft);border-bottom:1px solid var(--ink)}
+.mods td:first-child{font-family:var(--font-mono);font-size:13px;white-space:nowrap}
+.tbl{overflow-x:auto}
+
+.notes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.note{border-left:3px solid var(--signal);padding:4px 0 4px 14px;display:flex;flex-direction:column;gap:4px}
+.note b{font-size:15px}
+.note span{font-size:14px;color:var(--ink-soft)}
+
+footer{
+  font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);
+  border-top:1px solid var(--rule);padding-top:16px;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+}
+
+/* drawing plate */
+aside{width:100%;max-width:560px}
+.plate{border:1px solid var(--ink);background:var(--paper);display:flex;flex-direction:column}
+.plate-head{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px;border-bottom:1px solid var(--ink);
+  font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
+}
+.stage{position:relative;height:460px;cursor:grab}
+.stage:active{cursor:grabbing}
+.stage canvas{display:block;width:100%;height:100%}
+.tag{
+  position:absolute;left:0;top:0;pointer-events:none;
+  font-family:var(--font-mono);font-size:12.5px;line-height:1.2;white-space:nowrap;
+  color:var(--ink);background:var(--paper);border:1px solid var(--ink);padding:2px 6px;
+  transform:translate(0,-50%);
+}
+.tag i{font-style:normal;color:var(--signal);margin-right:4px}
+.controls{display:flex;gap:0;border-top:1px solid var(--ink)}
+.controls button{
+  flex:1;font:500 12px var(--font-mono);letter-spacing:.04em;
+  background:var(--paper);color:var(--ink);border:0;border-right:1px solid var(--ink);
+  padding:10px 8px;cursor:pointer;
+}
+.controls button:last-child{border-right:0}
+.controls button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.controls button:focus-visible{outline:2px solid var(--signal);outline-offset:-4px}
+.titleblock{
+  display:grid;grid-template-columns:auto 1fr;border-top:1px solid var(--ink);
+  font-family:var(--font-mono);font-size:11px;
+}
+.titleblock div{padding:6px 10px;border-bottom:1px solid var(--rule)}
+.titleblock div:nth-child(odd){color:var(--ink-soft);border-right:1px solid var(--rule)}
+.titleblock div:nth-last-child(-n+2){border-bottom:0}
+.fsm .st{transition:background .2s,color .2s}
+.motion{border:1px solid var(--ink);display:flex;flex-direction:column}
+.stage2{position:relative;height:340px}
+.stage2 canvas{display:block;width:100%;height:100%}
+.hud{position:absolute;left:12px;top:10px;display:flex;gap:12px;align-items:center;font-family:var(--font-mono);font-size:12px;pointer-events:none}
+.hud b{font-weight:500;background:var(--ink);color:var(--paper);padding:3px 8px}
+.hud b.firing{background:var(--signal)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;padding:8px 12px;border-top:1px solid var(--ink);font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px dashed var(--ink-soft)}
+.legend i.k-aim{border-top:2px solid var(--signal)}
+.legend i.k-shot{border-top:2px dotted var(--ink)}
+.fallback{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;text-align:center;font-size:13px;color:var(--ink-soft)}
+
+@media (max-width:900px){
+  .sheet{grid-template-columns:1fr;gap:32px}
+  .stage{height:320px}
+}
+@media (max-width:640px){
+  .pipe{grid-template-columns:1fr}
+  .pipe div{border-right:0;border-bottom:1px solid var(--rule)}
+  .pipe div:last-child{border-bottom:0}
+  .notes{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <main>
+    <header>
+      <h1><em>Autonomous Tracking</em> 2&#8209;Axis Turret with YOLO</h1>
+      <ul class="chips" aria-label="Tools">
+        <li>Python</li><li>Ultralytics YOLO</li><li>OpenCV</li><li>PID Control</li><li>Arduino · Serial</li><li>SciPy</li><li>3D Printing</li>
+      </ul>
+    </header>
+
+    <section>
+      <h2>Control Pipeline</h2>
+      <div class="pipe">
+        <div><span class="n">01</span><b>Detect</b><small>YOLO inference, class filtering, highest-confidence box</small></div>
+        <div><span class="n">02</span><b>Gate</b><small>Rejects boxes that jump far from the last position; re-acquires after loss</small></div>
+        <div><span class="n">03</span><b>Pixel → Angle</b><small>Converts pixel error to angular error using the camera FOV</small></div>
+        <div><span class="n">04</span><b>PID + FF</b><small>Per-axis PID with anti-windup and bearing-rate feedforward</small></div>
+        <div><span class="n">05</span><b>Actuate</b><small>Sends pan/tilt servo angles to an Arduino over serial</small></div>
+      </div>
+    </section>
+
+
+    <section>
+      <h2>Detection Model · YOLOv8</h2>
+      <p>YOLOv8 is a one-stage object detector released by Ultralytics. It predicts box locations and classes in a single forward pass, which makes it fast enough for live video. It is anchor-free, predicting object centers directly, and uses a decoupled head that handles classification and box regression separately.</p>
+      <div class="notes">
+        <div class="note"><b>Custom training</b><span>Photographed the target, labeled it in Roboflow, and fine-tuned on a single class (target) at 640 px input</span></div>
+        <div class="note"><b>Real-time inference</b><span>Runs on every webcam frame, keeps boxes above 0.4 confidence, and passes the chosen target's center to the controller</span></div>
+      </div>
+    </section>
+
+  </main>
+
+  <aside aria-label="Exploded view of the turret">
+    <div class="plate">
+      <div class="stage" id="stage">
+        <div class="fallback" id="fallback">The 3D view could not load. Open this page in a browser with WebGL.</div>
+      </div>
+      <div class="controls">
+        <button type="button" id="btn-explode" aria-pressed="true">Explode</button>
+        <button type="button" id="btn-assemble" aria-pressed="false">Assemble</button>
+        <button type="button" id="btn-spin" aria-pressed="true">Rotate</button>
+      </div>
+      <div class="titleblock">
+        <div>Parts</div><div>Base · turntable · tower · cradle · gun / camera</div>
+        <div>Axes</div><div>Pan (turntable) · tilt (tower servo)</div>
+        <div>Build</div><div>FDM 3D-printed parts</div>
+        <div>Controls</div><div>Drag to rotate, scroll to zoom</div>
+      </div>
+    </div>
+  </aside>
+  <section>
+    <h2>Fire-Control State Machine</h2>
+    <div class="fsm" role="img" aria-label="TRACK goes to LEAD on signal 1, LEAD goes to FIRING on signal 2, FIRING returns to LEAD after n seconds, cancel returns to TRACK">
+      <span class="st" data-s="TRACK">TRACK</span><span class="ar">— signal 1 →</span>
+      <span class="st" data-s="LEAD">LEAD</span><span class="ar">— signal 2 →</span>
+      <span class="st" data-s="FIRING">FIRING</span><span class="ar">— after n s → LEAD · cancel → TRACK</span>
+    </div>
+    <div class="motion">
+      <div class="stage2" id="stage2">
+        <div class="hud" id="hud"><b id="hud-state">TRACK</b><span id="hud-lead">Lead angle 0.0°</span></div>
+      </div>
+      <div class="legend"><span><i class="k-los"></i>Line of sight (current target)</span><span><i class="k-aim"></i>Lead aim point (predicted impact)</span><span><i class="k-shot"></i>Projectile path</span></div>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function(){
+  const stage = document.getElementById('stage');
+  const fallback = document.getElementById('fallback');
+  if (!window.THREE) { fallback.style.display='flex'; return; }
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true, alpha:true}); }
+  catch(e){ fallback.style.display='flex'; return; }
+
+  const css = getComputedStyle(document.documentElement);
+  const INK = new THREE.Color(css.getPropertyValue('--ink').trim());
+  const SIGNAL = new THREE.Color(css.getPropertyValue('--signal').trim());
+  const PAPER = new THREE.Color(css.getPropertyValue('--paper').trim());
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 500);
+  camera.position.set(48, 40, 74);
+
+  const controls = THREE.OrbitControls ? new THREE.OrbitControls(camera, renderer.domElement) : null;
+  if (controls){
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.enablePan = false; controls.minDistance = 35; controls.maxDistance = 150;
+    controls.target.set(3, 22, 0);
+  }
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc9cfc8, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 0.55); key.position.set(20,40,15); scene.add(key);
+
+  const lineMat = new THREE.LineBasicMaterial({color:INK});
+  const EDGE_DARK = new THREE.LineBasicMaterial({color:0x8794a3});
+  function part(geom, color, darkEdges){
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(geom, new THREE.MeshLambertMaterial({color, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1})));
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), darkEdges ? EDGE_DARK : lineMat));
+    return g;
+  }
+  const C_SILVER = 0xc9ced3, C_WHITE = 0xfbfbf8, C_TERRA = 0x6f9be6, C_BLACK = 0x23272c;
+
+  // Proportions estimated from the built turret (cm)
+  const BASE_L = 30, BASE_W = 12, BASE_H = 8, DISC_R = 5.6, DISC_H = 1.5, DISC_X = 8.6;
+  const TOWER_W = 9, TOWER_H = 9, TOWER_D = 2.4, CONE_H = 3;
+  const PIVOT_Y = BASE_H + DISC_H + CONE_H + TOWER_H - 2.6;
+  const PITCH = THREE.MathUtils.degToRad(20);
+
+  const parts = [];
+  function add(obj, explode, label, num){
+    obj.userData = {a:obj.position.y, e:obj.position.y + explode};
+    scene.add(obj);
+    parts.push({obj, label, num});
+    return obj;
+  }
+
+  // 1. base: stadium-shaped housing with vent slots
+  const bs = new THREE.Shape();
+  const hl = BASE_L/2 - BASE_W/2, r = BASE_W/2;
+  bs.moveTo(-hl, -r); bs.lineTo(hl, -r); bs.absarc(hl, 0, r, -Math.PI/2, Math.PI/2, false);
+  bs.lineTo(-hl, r); bs.absarc(-hl, 0, r, Math.PI/2, Math.PI*1.5, false);
+  const baseGeo = new THREE.ExtrudeGeometry(bs, {depth:BASE_H, bevelEnabled:false, curveSegments:40});
+  const base = part(baseGeo, C_SILVER); base.rotation.x = -Math.PI/2;
+  const baseG = new THREE.Group(); baseG.add(base);
+  const vents = [];
+  for (let i=0;i<9;i++){ const x = -13 + i*1.2;
+    vents.push(new THREE.Vector3(x,BASE_H+0.02,-4), new THREE.Vector3(x,BASE_H+0.02,4)); }
+  baseG.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vents), lineMat));
+  add(baseG, 0, 'Base · electronics housing', '1');
+
+  // 2. turntable (pan)
+  const disc = part(new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_H, 64), C_WHITE);
+  disc.position.set(DISC_X, BASE_H + DISC_H/2, 0);
+  add(disc, 2.5, 'Turntable · pan axis', '2');
+
+  // 3. tower with tilt servo
+  const tower = new THREE.Group();
+  const cone = part(new THREE.CylinderGeometry(2.2, 4.4, CONE_H, 48), C_WHITE);
+  cone.position.y = CONE_H/2; tower.add(cone);
+  const ts = new THREE.Shape(); const tw = TOWER_W/2, th = TOWER_H - tw;
+  ts.moveTo(-tw, 0); ts.lineTo(tw, 0); ts.lineTo(tw, th); ts.absarc(0, th, tw, 0, Math.PI, false); ts.lineTo(-tw, 0);
+  const plateGeo = new THREE.ExtrudeGeometry(ts, {depth:TOWER_D, bevelEnabled:false, curveSegments:32});
+  plateGeo.translate(0, 0, -TOWER_D/2);
+  const plate = part(plateGeo, C_WHITE); plate.position.y = CONE_H; tower.add(plate);
+  const servo = part(new THREE.BoxGeometry(5.4, 2.8, 2.6), C_BLACK, true);
+  servo.position.set(0, PIVOT_Y - (BASE_H + DISC_H) - 1.6, TOWER_D/2 + 1.3); tower.add(servo);
+  const horn = part(new THREE.CylinderGeometry(0.6, 0.6, 0.6, 20), C_BLACK, true);
+  horn.rotation.x = Math.PI/2; horn.position.set(0, servo.position.y + 1.6, TOWER_D/2 + 0.3); tower.add(horn);
+  tower.position.set(DISC_X, BASE_H + DISC_H, 0);
+  add(tower, 5, 'Tower · tilt servo', '3');
+
+  // 4. cradle: slanted side plate + deck (tilts about z)
+  const cradle = new THREE.Group();
+  const cs = new THREE.Shape();
+  cs.moveTo(-12, -2.5); cs.lineTo(4, -2.5); cs.lineTo(11, 5.5); cs.lineTo(-5, 5.5); cs.lineTo(-12, -2.5);
+  const sideGeo = new THREE.ExtrudeGeometry(cs, {depth:0.6, bevelEnabled:false});
+  const front = part(sideGeo, C_TERRA); front.position.z = 3.6; cradle.add(front);
+  const back = part(sideGeo, C_TERRA); back.position.z = -4.2; cradle.add(back);
+  const deck = part(new THREE.BoxGeometry(17, 0.6, 8.4), C_TERRA); deck.position.set(3, 5.8, 0); cradle.add(deck);
+  cradle.rotation.z = PITCH;
+  cradle.position.set(DISC_X, PIVOT_Y, 0);
+  add(cradle, 8, 'Cradle', '4');
+
+  // 5. payload: gun module + webcam, riding on the cradle deck
+  const payload = new THREE.Group();
+  const body = part(new THREE.BoxGeometry(7, 3.4, 3.6), C_BLACK, true); body.position.set(0, 7.8, 0); payload.add(body);
+  const motor = part(new THREE.CylinderGeometry(1, 1, 2.2, 24), C_BLACK, true); motor.position.set(-1, 10.6, 0); payload.add(motor);
+  const barrel = part(new THREE.CylinderGeometry(0.55, 0.55, 12, 24), C_BLACK, true);
+  barrel.rotation.z = Math.PI/2; barrel.position.set(9, 7.4, 0); payload.add(barrel);
+  const camMount = part(new THREE.BoxGeometry(4, 0.8, 3.4), C_BLACK, true); camMount.position.set(7.5, 6.5+2.4, 0); payload.add(camMount);
+  const cam = part(new THREE.BoxGeometry(2.4, 3.2, 3.2), C_BLACK, true); cam.position.set(8, 11, 0); payload.add(cam);
+  const lens = part(new THREE.CylinderGeometry(1.1, 1.1, 0.8, 28), C_BLACK, true);
+  lens.rotation.z = Math.PI/2; lens.position.set(9.6, 11, 0); payload.add(lens);
+  payload.rotation.z = PITCH;
+  payload.position.set(DISC_X, PIVOT_Y, 0);
+  add(payload, 12, 'Gun · camera', '5');
+
+  // pan axis centerline through the turntable
+  const guideGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(DISC_X,0,0), new THREE.Vector3(DISC_X,46,0)]);
+  const guide = new THREE.Line(guideGeo, new THREE.LineDashedMaterial({color:SIGNAL, dashSize:0.7, gapSize:0.5, transparent:true, opacity:0.6}));
+  guide.computeLineDistances();
+  scene.add(guide);
+
+  const grid = new THREE.GridHelper(60, 30, 0xc5ccc6, 0xdfe3dc);
+  grid.position.y = -0.01; scene.add(grid);
+
+  // HTML labels
+  const tags = parts.map(p=>{
+    const el = document.createElement('div');
+    el.className = 'tag'; el.innerHTML = '<i>' + p.num + '</i>' + p.label;
+    stage.appendChild(el); return el;
+  });
+
+  // state
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let target = 1, t = reduced ? 1 : 0, spin = !reduced;
+  const btnE = document.getElementById('btn-explode'), btnA = document.getElementById('btn-assemble'), btnS = document.getElementById('btn-spin');
+  function setMode(v){ target = v; btnE.setAttribute('aria-pressed', v===1); btnA.setAttribute('aria-pressed', v===0); }
+  btnE.addEventListener('click', ()=>setMode(1));
+  btnA.addEventListener('click', ()=>setMode(0));
+  btnS.addEventListener('click', ()=>{ spin=!spin; btnS.setAttribute('aria-pressed', spin); });
+  btnS.setAttribute('aria-pressed', spin);
+
+  function resize(){
+    const w = stage.clientWidth, h = stage.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w/h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  const ease = x => x<.5 ? 4*x*x*x : 1-Math.pow(-2*x+2,3)/2;
+  const v = new THREE.Vector3();
+  let last = performance.now(), angle = 0;
+
+  function frame(now){
+    const dt = Math.min((now-last)/1000, 0.05); last = now;
+    if (reduced) t = target; else t += Math.sign(target - t) * Math.min(Math.abs(target - t), dt*0.9);
+    const k = ease(t);
+    parts.forEach(p=>{ const u=p.obj.userData; p.obj.position.y = u.a + (u.e-u.a)*k; });
+    guide.material.opacity = 0.6*k;
+    tags.forEach(el=>el.style.opacity = k < 0.25 ? 0 : Math.min(1,(k-0.25)/0.5));
+
+    if (spin){ angle += dt*0.25; const r = Math.hypot(camera.position.x, camera.position.z);
+      const base = Math.atan2(camera.position.z, camera.position.x) + dt*0.25;
+      camera.position.x = r*Math.cos(base); camera.position.z = r*Math.sin(base); }
+    if (controls) controls.update(); else camera.lookAt(3,22,0);
+    renderer.render(scene, camera);
+
+    // place labels to the right of each part
+    const w = stage.clientWidth, h = stage.clientHeight;
+    parts.forEach((p,i)=>{
+      const box = new THREE.Box3().setFromObject(p.obj);
+      v.set(box.min.x, (box.min.y+box.max.y)/2, 0);
+      v.project(camera);
+      const x = (v.x*0.5+0.5)*w, y = (-v.y*0.5+0.5)*h;
+      tags[i].style.left = Math.max(x, 4) + 'px';
+      tags[i].style.top = y + 'px';
+    });
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+(function(){
+  const stage = document.getElementById('stage2');
+  if (!window.THREE) return;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true, alpha:true}); } catch(e){ return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+  const css = getComputedStyle(document.documentElement);
+  const INK = new THREE.Color(css.getPropertyValue('--ink').trim());
+  const SIGNAL = new THREE.Color(css.getPropertyValue('--signal').trim());
+  const SOFT = new THREE.Color(css.getPropertyValue('--ink-soft').trim());
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+  camera.position.set(-6, 52, 36);
+  camera.lookAt(0, 8, -22);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd0d4d0, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.5); sun.position.set(10,40,20); scene.add(sun);
+  const grid = new THREE.GridHelper(120, 40, 0xd6dad6, 0xeceeea); scene.add(grid);
+
+  const lineMat = new THREE.LineBasicMaterial({color:INK});
+  function part(geom, color){
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(geom, new THREE.MeshLambertMaterial({color, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1})));
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), lineMat));
+    return g;
+  }
+
+  // compact turret: base, pan head, tilt cradle with barrel along local +x
+  const turret = new THREE.Group(); turret.scale.setScalar(1.5); scene.add(turret);
+  const base = part(new THREE.CylinderGeometry(3.2, 3.6, 2.4, 40), 0xc9ced3); base.position.y = 1.2; turret.add(base);
+  const pan = new THREE.Group(); pan.position.y = 2.4; turret.add(pan);
+  const disc = part(new THREE.CylinderGeometry(2.8, 2.8, 0.6, 40), 0xfbfbf8); disc.position.y = 0.3; pan.add(disc);
+  const post = part(new THREE.BoxGeometry(1.6, 3, 1.2), 0xfbfbf8); post.position.y = 2.1; pan.add(post);
+  const tilt = new THREE.Group(); tilt.position.y = 3.6; pan.add(tilt);
+  const cradle = part(new THREE.BoxGeometry(5, 1.2, 2.6), 0x6f9be6); cradle.position.x = 0.8; tilt.add(cradle);
+  const barrel = part(new THREE.CylinderGeometry(0.3, 0.3, 6, 20), 0x23272c);
+  barrel.rotation.z = Math.PI/2; barrel.position.set(4.2, 0.9, 0); tilt.add(barrel);
+  const MUZZLE = new THREE.Vector3(7.2, 0.9, 0);
+  const pivot = new THREE.Vector3(0, 9, 0);
+
+  // target: small drone
+  const target = new THREE.Group(); scene.add(target);
+  const hull = part(new THREE.BoxGeometry(2.4, 0.7, 2.4), 0x23272c); target.add(hull);
+  [[1.6,1.6],[1.6,-1.6],[-1.6,1.6],[-1.6,-1.6]].forEach(([x,z])=>{
+    const rotor = part(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 20), 0xe8eaec); rotor.position.set(x,0.45,z); target.add(rotor);
+  });
+  // flight path guide
+  const P0 = new THREE.Vector3(-46, 18, -38), V = new THREE.Vector3(9.5, 0, 1.2);
+  const pathGeo = new THREE.BufferGeometry().setFromPoints([P0.clone(), P0.clone().addScaledVector(V, 10)]);
+  const path = new THREE.Line(pathGeo, new THREE.LineDashedMaterial({color:SOFT, dashSize:1, gapSize:1, transparent:true, opacity:0.5}));
+  path.computeLineDistances(); scene.add(path);
+
+  // line of sight + aim marker
+  const losGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const los = new THREE.Line(losGeo, new THREE.LineDashedMaterial({color:SOFT, dashSize:0.8, gapSize:0.6}));
+  scene.add(los);
+  const aimGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const aimLine = new THREE.Line(aimGeo, new THREE.LineBasicMaterial({color:SIGNAL, transparent:true}));
+  scene.add(aimLine);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.4, 1.75, 40), new THREE.MeshBasicMaterial({color:SIGNAL, side:THREE.DoubleSide, transparent:true}));
+  scene.add(ring);
+
+  // projectiles
+  const SHOT_SPEED = 55;
+  const shotGeo = new THREE.SphereGeometry(0.28, 10, 8);
+  const shotMat = new THREE.MeshBasicMaterial({color:INK});
+  const shots = [];
+  const trailMat = new THREE.LineBasicMaterial({color:INK, transparent:true, opacity:0.35});
+  const flashes = [];
+
+  const CYCLE = 10;
+  const phases = [[0,3.2,'TRACK'],[3.2,5.2,'LEAD'],[5.2,7.8,'FIRING'],[7.8,10,'LEAD']];
+  const stateOf = t => (phases.find(p => t >= p[0] && t < p[1]) || phases[0])[2];
+  const fsmEls = document.querySelectorAll('.fsm .st');
+  const hudState = document.getElementById('hud-state'), hudLead = document.getElementById('hud-lead');
+
+  function intercept(p, v){
+    // solve |p + v t - o| = s t from the pivot
+    const d = p.clone().sub(pivot);
+    const a = v.dot(v) - SHOT_SPEED*SHOT_SPEED, b = 2*d.dot(v), c = d.dot(d);
+    const disc = b*b - 4*a*c; if (disc < 0) return p.clone();
+    const t = (-b - Math.sqrt(disc)) / (2*a);
+    return p.clone().addScaledVector(v, Math.max(t, 0));
+  }
+
+  const aimDir = new THREE.Vector3(1,0.3,-1).normalize();
+  const want = new THREE.Vector3(), tmp = new THREE.Vector3();
+  let lastState = '', lastShot = 0, prev = performance.now(), clock = 0;
+
+  function resize(){ const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix(); }
+  window.addEventListener('resize', resize); resize();
+
+  function step(dt){
+    clock = (clock + dt) % CYCLE;
+    const t = clock, state = stateOf(t);
+    const p = P0.clone().addScaledVector(V, t);
+    target.position.copy(p);
+    target.rotation.y = Math.sin(t*1.3)*0.15;
+
+    const aim = intercept(p, V);
+    const leadOn = state !== 'TRACK';
+    want.copy(leadOn ? aim : p).sub(pivot).normalize();
+    aimDir.lerp(want, 1 - Math.exp(-dt*5)).normalize();   // servo lag
+    pan.rotation.y = Math.atan2(-aimDir.z, aimDir.x);
+    tilt.rotation.z = Math.asin(aimDir.y);
+
+    los.geometry.setFromPoints([pivot, p]); los.computeLineDistances();
+    const leadVis = leadOn ? 1 : 0;
+    aimLine.material.opacity = leadVis; ring.material.opacity = leadVis;
+    aimLine.geometry.setFromPoints([pivot, aim]);
+    ring.position.copy(aim); ring.lookAt(camera.position);
+
+    const toT = p.clone().sub(pivot).normalize();
+    const leadDeg = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, toT.dot(aimDir))));
+    hudLead.textContent = 'Lead angle ' + (leadOn ? leadDeg : 0).toFixed(1) + '°';
+    if (state !== lastState){
+      hudState.textContent = state; hudState.classList.toggle('firing', state === 'FIRING');
+      fsmEls.forEach(el => el.classList.toggle('hot', el.dataset.s === state));
+      lastState = state;
+      if (t < 0.5) { shots.splice(0).forEach(s => { scene.remove(s.mesh); scene.remove(s.trail); }); }
+    }
+
+    // fire
+    if (state === 'FIRING' && t - lastShot > 0.16){
+      lastShot = t;
+      const muzzle = MUZZLE.clone(); tilt.localToWorld(muzzle);
+      const mesh = new THREE.Mesh(shotGeo, shotMat); mesh.position.copy(muzzle); scene.add(mesh);
+      const trail = new THREE.Line(new THREE.BufferGeometry().setFromPoints([muzzle.clone(), muzzle.clone()]), trailMat); scene.add(trail);
+      shots.push({mesh, trail, start:muzzle.clone(), v:aimDir.clone().multiplyScalar(SHOT_SPEED), age:0});
+    }
+    if (state !== 'FIRING' && t < lastShot) lastShot = 0;
+    for (let i = shots.length-1; i >= 0; i--){
+      const s = shots[i]; s.age += dt;
+      s.mesh.position.copy(s.start).addScaledVector(s.v, s.age);
+      tmp.copy(s.start).addScaledVector(s.v, Math.max(0, s.age - 0.25));
+      s.trail.geometry.setFromPoints([tmp.clone(), s.mesh.position.clone()]);
+      if (s.mesh.position.distanceTo(target.position) < 1.8){
+        const f = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.5, 24), new THREE.MeshBasicMaterial({color:SIGNAL, transparent:true, side:THREE.DoubleSide}));
+        f.position.copy(s.mesh.position); f.lookAt(camera.position); scene.add(f); flashes.push({m:f, age:0});
+      }
+      if (s.age > 1.6 || s.mesh.position.distanceTo(target.position) < 1.8){ scene.remove(s.mesh); scene.remove(s.trail); shots.splice(i,1); }
+    }
+    for (let i = flashes.length-1; i >= 0; i--){
+      const f = flashes[i]; f.age += dt; f.m.scale.setScalar(1 + f.age*8); f.m.material.opacity = Math.max(0, 1 - f.age*3);
+      if (f.age > 0.35){ scene.remove(f.m); flashes.splice(i,1); }
+    }
+    renderer.render(scene, camera);
+  }
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced){ for (let i=0;i<120;i++) step(5.6/120); return; }
+  let visible = true;
+  if ('IntersectionObserver' in window) new IntersectionObserver(e => { visible = e[0].isIntersecting; }).observe(stage);
+  function loop(now){
+    const dt = Math.max(0, Math.min((now - prev)/1000, 0.05)); prev = now;
+    if (visible) step(dt);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
