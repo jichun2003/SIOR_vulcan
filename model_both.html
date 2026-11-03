@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turret 3D · Structure & Fire Control</title>
+<style>
+:root{ --ink:#1b2a3a; --ink-soft:#4b5b6b; --signal:#1d5fd1; --paper:#ffffff; }
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  overflow: hidden; background-color: transparent;
+}
+.wrap { position: fixed; inset: 0; display: flex; flex-direction: row; }
+.pane { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; }
+#stage { cursor: grab; }
+#stage:active { cursor: grabbing; }
+canvas { display: block; width: 100% !important; height: 100% !important; outline: none; }
+.hud { position: absolute; left: 12px; top: 10px; display: flex; gap: 10px; align-items: center;
+  font: 12px "Times New Roman", Times, serif; color: var(--ink-soft); pointer-events: none; }
+.hud b { font-weight: 500; background: var(--ink); color: var(--paper); padding: 3px 8px; }
+.hud b.firing { background: var(--signal); }
+.hud span { background: rgba(255,255,255,.75); padding: 2px 6px; }
+/* 세로로 긴 임베드에서는 위아래로 쌓기 */
+@media (max-aspect-ratio: 1/1) { .wrap { flex-direction: column; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="pane" id="stage"></div>
+  <div class="pane" id="stage2">
+    <div class="hud"><b id="hud-state">TRACK</b><span id="hud-lead">Lead angle 0.0°</span></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function(){
+  const stage = document.getElementById('stage');
+  if (!window.THREE) return;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true, alpha:true}); }
+  catch(e){ return; }
+  renderer.setClearColor(0x000000, 0);
+
+  const css = getComputedStyle(document.documentElement);
+  const INK = new THREE.Color(css.getPropertyValue('--ink').trim());
+  const SIGNAL = new THREE.Color(css.getPropertyValue('--signal').trim());
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 500);
+  camera.position.set(48, 40, 74);
+
+  const controls = THREE.OrbitControls ? new THREE.OrbitControls(camera, renderer.domElement) : null;
+  if (controls){
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.enablePan = false; controls.minDistance = 35; controls.maxDistance = 150;
+    controls.target.set(3, 22, 0);
+  }
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc9cfc8, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 0.55); key.position.set(20,40,15); scene.add(key);
+
+  const lineMat = new THREE.LineBasicMaterial({color:INK});
+  const EDGE_DARK = new THREE.LineBasicMaterial({color:0x8794a3});
+  function part(geom, color, darkEdges){
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(geom, new THREE.MeshLambertMaterial({color, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1})));
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), darkEdges ? EDGE_DARK : lineMat));
+    return g;
+  }
+  const C_SILVER = 0xc9ced3, C_WHITE = 0xfbfbf8, C_TERRA = 0x6f9be6, C_BLACK = 0x23272c;
+
+  // Proportions estimated from the built turret (cm)
+  const BASE_L = 30, BASE_W = 12, BASE_H = 8, DISC_R = 5.6, DISC_H = 1.5, DISC_X = 8.6;
+  const TOWER_W = 9, TOWER_H = 9, TOWER_D = 2.4, CONE_H = 3;
+  const PIVOT_Y = BASE_H + DISC_H + CONE_H + TOWER_H - 2.6;
+  const PITCH = THREE.MathUtils.degToRad(20);
+
+  const parts = [];
+  function add(obj, explode){
+    obj.userData = {a:obj.position.y, e:obj.position.y + explode};
+    scene.add(obj);
+    parts.push(obj);
+    return obj;
+  }
+
+  // 1. base: stadium-shaped housing with vent slots
+  const bs = new THREE.Shape();
+  const hl = BASE_L/2 - BASE_W/2, r = BASE_W/2;
+  bs.moveTo(-hl, -r); bs.lineTo(hl, -r); bs.absarc(hl, 0, r, -Math.PI/2, Math.PI/2, false);
+  bs.lineTo(-hl, r); bs.absarc(-hl, 0, r, Math.PI/2, Math.PI*1.5, false);
+  const baseGeo = new THREE.ExtrudeGeometry(bs, {depth:BASE_H, bevelEnabled:false, curveSegments:40});
+  const base = part(baseGeo, C_SILVER); base.rotation.x = -Math.PI/2;
+  const baseG = new THREE.Group(); baseG.add(base);
+  const vents = [];
+  for (let i=0;i<9;i++){ const x = -13 + i*1.2;
+    vents.push(new THREE.Vector3(x,BASE_H+0.02,-4), new THREE.Vector3(x,BASE_H+0.02,4)); }
+  baseG.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vents), lineMat));
+  add(baseG, 0);
+
+  // 2. turntable (pan)
+  const disc = part(new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_H, 64), C_WHITE);
+  disc.position.set(DISC_X, BASE_H + DISC_H/2, 0);
+  add(disc, 2.5);
+
+  // 3. tower with tilt servo
+  const tower = new THREE.Group();
+  const cone = part(new THREE.CylinderGeometry(2.2, 4.4, CONE_H, 48), C_WHITE);
+  cone.position.y = CONE_H/2; tower.add(cone);
+  const ts = new THREE.Shape(); const tw = TOWER_W/2, th = TOWER_H - tw;
+  ts.moveTo(-tw, 0); ts.lineTo(tw, 0); ts.lineTo(tw, th); ts.absarc(0, th, tw, 0, Math.PI, false); ts.lineTo(-tw, 0);
+  const plateGeo = new THREE.ExtrudeGeometry(ts, {depth:TOWER_D, bevelEnabled:false, curveSegments:32});
+  plateGeo.translate(0, 0, -TOWER_D/2);
+  const plate = part(plateGeo, C_WHITE); plate.position.y = CONE_H; tower.add(plate);
+  const servo = part(new THREE.BoxGeometry(5.4, 2.8, 2.6), C_BLACK, true);
+  servo.position.set(0, PIVOT_Y - (BASE_H + DISC_H) - 1.6, TOWER_D/2 + 1.3); tower.add(servo);
+  const horn = part(new THREE.CylinderGeometry(0.6, 0.6, 0.6, 20), C_BLACK, true);
+  horn.rotation.x = Math.PI/2; horn.position.set(0, servo.position.y + 1.6, TOWER_D/2 + 0.3); tower.add(horn);
+  tower.position.set(DISC_X, BASE_H + DISC_H, 0);
+  add(tower, 5);
+
+  // 4. cradle
+  const cradle = new THREE.Group();
+  const cs = new THREE.Shape();
+  cs.moveTo(-12, -2.5); cs.lineTo(4, -2.5); cs.lineTo(11, 5.5); cs.lineTo(-5, 5.5); cs.lineTo(-12, -2.5);
+  const sideGeo = new THREE.ExtrudeGeometry(cs, {depth:0.6, bevelEnabled:false});
+  const front = part(sideGeo, C_TERRA); front.position.z = 3.6; cradle.add(front);
+  const back = part(sideGeo, C_TERRA); back.position.z = -4.2; cradle.add(back);
+  const deck = part(new THREE.BoxGeometry(17, 0.6, 8.4), C_TERRA); deck.position.set(3, 5.8, 0); cradle.add(deck);
+  cradle.rotation.z = PITCH;
+  cradle.position.set(DISC_X, PIVOT_Y, 0);
+  add(cradle, 8);
+
+  // 5. payload: gun module + webcam
+  const payload = new THREE.Group();
+  const body = part(new THREE.BoxGeometry(7, 3.4, 3.6), C_BLACK, true); body.position.set(0, 7.8, 0); payload.add(body);
+  const motor = part(new THREE.CylinderGeometry(1, 1, 2.2, 24), C_BLACK, true); motor.position.set(-1, 10.6, 0); payload.add(motor);
+  const barrel = part(new THREE.CylinderGeometry(0.55, 0.55, 12, 24), C_BLACK, true);
+  barrel.rotation.z = Math.PI/2; barrel.position.set(9, 7.4, 0); payload.add(barrel);
+  const camMount = part(new THREE.BoxGeometry(4, 0.8, 3.4), C_BLACK, true); camMount.position.set(7.5, 6.5+2.4, 0); payload.add(camMount);
+  const cam = part(new THREE.BoxGeometry(2.4, 3.2, 3.2), C_BLACK, true); cam.position.set(8, 11, 0); payload.add(cam);
+  const lens = part(new THREE.CylinderGeometry(1.1, 1.1, 0.8, 28), C_BLACK, true);
+  lens.rotation.z = Math.PI/2; lens.position.set(9.6, 11, 0); payload.add(lens);
+  payload.rotation.z = PITCH;
+  payload.position.set(DISC_X, PIVOT_Y, 0);
+  add(payload, 12);
+
+  // pan axis centerline
+  const guideGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(DISC_X,0,0), new THREE.Vector3(DISC_X,46,0)]);
+  const guide = new THREE.Line(guideGeo, new THREE.LineDashedMaterial({color:SIGNAL, dashSize:0.7, gapSize:0.5, transparent:true, opacity:0.6}));
+  guide.computeLineDistances();
+  scene.add(guide);
+
+  const grid = new THREE.GridHelper(60, 30, 0xc5ccc6, 0xdfe3dc);
+  grid.position.y = -0.01; scene.add(grid);
+
+  // 전체 화면 리사이즈 (비율 유지)
+  function resize(){
+    const w = stage.clientWidth, h = stage.clientHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // 분해 상태로 표시, 자동 회전 (드래그 시 일시정지)
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let t = reduced ? 1 : 0, spin = !reduced, resumeAt = 0;
+  if (controls){
+    controls.addEventListener('start', ()=>{ spin = false; });
+    controls.addEventListener('end', ()=>{ resumeAt = performance.now() + 2500; });
+  }
+
+  const ease = x => x<.5 ? 4*x*x*x : 1-Math.pow(-2*x+2,3)/2;
+  let last = performance.now();
+
+  function frame(now){
+    const dt = Math.min((now-last)/1000, 0.05); last = now;
+    if (!reduced){ t = Math.min(1, t + dt*0.9); if (!spin && resumeAt && now > resumeAt){ spin = true; resumeAt = 0; } }
+    const k = ease(t);
+    parts.forEach(p=>{ const u=p.userData; p.position.y = u.a + (u.e-u.a)*k; });
+    guide.material.opacity = 0.6*k;
+
+    if (spin){ const r = Math.hypot(camera.position.x, camera.position.z);
+      const a = Math.atan2(camera.position.z, camera.position.x) + dt*0.25;
+      camera.position.x = r*Math.cos(a); camera.position.z = r*Math.sin(a); }
+    if (controls) controls.update(); else camera.lookAt(3,22,0);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+(function(){
+  const stage = document.getElementById('stage2');
+  if (!window.THREE) return;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true, alpha:true}); } catch(e){ return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+  const css = getComputedStyle(document.documentElement);
+  const INK = new THREE.Color(css.getPropertyValue('--ink').trim());
+  const SIGNAL = new THREE.Color(css.getPropertyValue('--signal').trim());
+  const SOFT = new THREE.Color(css.getPropertyValue('--ink-soft').trim());
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+  camera.position.set(-6, 52, 36);
+  camera.lookAt(0, 8, -22);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd0d4d0, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.5); sun.position.set(10,40,20); scene.add(sun);
+  const grid = new THREE.GridHelper(120, 40, 0xd6dad6, 0xeceeea); scene.add(grid);
+
+  const lineMat = new THREE.LineBasicMaterial({color:INK});
+  function part(geom, color){
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(geom, new THREE.MeshLambertMaterial({color, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1})));
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), lineMat));
+    return g;
+  }
+
+  // compact turret: base, pan head, tilt cradle with barrel along local +x
+  const turret = new THREE.Group(); turret.scale.setScalar(1.5); scene.add(turret);
+  const base = part(new THREE.CylinderGeometry(3.2, 3.6, 2.4, 40), 0xc9ced3); base.position.y = 1.2; turret.add(base);
+  const pan = new THREE.Group(); pan.position.y = 2.4; turret.add(pan);
+  const disc = part(new THREE.CylinderGeometry(2.8, 2.8, 0.6, 40), 0xfbfbf8); disc.position.y = 0.3; pan.add(disc);
+  const post = part(new THREE.BoxGeometry(1.6, 3, 1.2), 0xfbfbf8); post.position.y = 2.1; pan.add(post);
+  const tilt = new THREE.Group(); tilt.position.y = 3.6; pan.add(tilt);
+  const cradle = part(new THREE.BoxGeometry(5, 1.2, 2.6), 0x6f9be6); cradle.position.x = 0.8; tilt.add(cradle);
+  const barrel = part(new THREE.CylinderGeometry(0.3, 0.3, 6, 20), 0x23272c);
+  barrel.rotation.z = Math.PI/2; barrel.position.set(4.2, 0.9, 0); tilt.add(barrel);
+  const MUZZLE = new THREE.Vector3(7.2, 0.9, 0);
+  const pivot = new THREE.Vector3(0, 9, 0);
+
+  // target: small drone
+  const target = new THREE.Group(); scene.add(target);
+  const hull = part(new THREE.BoxGeometry(2.4, 0.7, 2.4), 0x23272c); target.add(hull);
+  [[1.6,1.6],[1.6,-1.6],[-1.6,1.6],[-1.6,-1.6]].forEach(([x,z])=>{
+    const rotor = part(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 20), 0xe8eaec); rotor.position.set(x,0.45,z); target.add(rotor);
+  });
+  // flight path guide
+  const P0 = new THREE.Vector3(-46, 18, -38), V = new THREE.Vector3(9.5, 0, 1.2);
+  const pathGeo = new THREE.BufferGeometry().setFromPoints([P0.clone(), P0.clone().addScaledVector(V, 10)]);
+  const path = new THREE.Line(pathGeo, new THREE.LineDashedMaterial({color:SOFT, dashSize:1, gapSize:1, transparent:true, opacity:0.5}));
+  path.computeLineDistances(); scene.add(path);
+
+  // line of sight + aim marker
+  const losGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const los = new THREE.Line(losGeo, new THREE.LineDashedMaterial({color:SOFT, dashSize:0.8, gapSize:0.6}));
+  scene.add(los);
+  const aimGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const aimLine = new THREE.Line(aimGeo, new THREE.LineBasicMaterial({color:SIGNAL, transparent:true}));
+  scene.add(aimLine);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.4, 1.75, 40), new THREE.MeshBasicMaterial({color:SIGNAL, side:THREE.DoubleSide, transparent:true}));
+  scene.add(ring);
+
+  // projectiles
+  const SHOT_SPEED = 55;
+  const shotGeo = new THREE.SphereGeometry(0.28, 10, 8);
+  const shotMat = new THREE.MeshBasicMaterial({color:INK});
+  const shots = [];
+  const trailMat = new THREE.LineBasicMaterial({color:INK, transparent:true, opacity:0.35});
+  const flashes = [];
+
+  const CYCLE = 10;
+  const phases = [[0,3.2,'TRACK'],[3.2,5.2,'LEAD'],[5.2,7.8,'FIRING'],[7.8,10,'LEAD']];
+  const stateOf = t => (phases.find(p => t >= p[0] && t < p[1]) || phases[0])[2];
+  const fsmEls = document.querySelectorAll('.fsm .st');
+  const hudState = document.getElementById('hud-state'), hudLead = document.getElementById('hud-lead');
+
+  function intercept(p, v){
+    // solve |p + v t - o| = s t from the pivot
+    const d = p.clone().sub(pivot);
+    const a = v.dot(v) - SHOT_SPEED*SHOT_SPEED, b = 2*d.dot(v), c = d.dot(d);
+    const disc = b*b - 4*a*c; if (disc < 0) return p.clone();
+    const t = (-b - Math.sqrt(disc)) / (2*a);
+    return p.clone().addScaledVector(v, Math.max(t, 0));
+  }
+
+  const aimDir = new THREE.Vector3(1,0.3,-1).normalize();
+  const want = new THREE.Vector3(), tmp = new THREE.Vector3();
+  let lastState = '', lastShot = 0, prev = performance.now(), clock = 0;
+
+  function resize(){ const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix(); }
+  window.addEventListener('resize', resize); resize();
+
+  function step(dt){
+    clock = (clock + dt) % CYCLE;
+    const t = clock, state = stateOf(t);
+    const p = P0.clone().addScaledVector(V, t);
+    target.position.copy(p);
+    target.rotation.y = Math.sin(t*1.3)*0.15;
+
+    const aim = intercept(p, V);
+    const leadOn = state !== 'TRACK';
+    want.copy(leadOn ? aim : p).sub(pivot).normalize();
+    aimDir.lerp(want, 1 - Math.exp(-dt*5)).normalize();   // servo lag
+    pan.rotation.y = Math.atan2(-aimDir.z, aimDir.x);
+    tilt.rotation.z = Math.asin(aimDir.y);
+
+    los.geometry.setFromPoints([pivot, p]); los.computeLineDistances();
+    const leadVis = leadOn ? 1 : 0;
+    aimLine.material.opacity = leadVis; ring.material.opacity = leadVis;
+    aimLine.geometry.setFromPoints([pivot, aim]);
+    ring.position.copy(aim); ring.lookAt(camera.position);
+
+    const toT = p.clone().sub(pivot).normalize();
+    const leadDeg = THREE.MathUtils.radToDeg(Math.acos(Math.min(1, toT.dot(aimDir))));
+    hudLead.textContent = 'Lead angle ' + (leadOn ? leadDeg : 0).toFixed(1) + '°';
+    if (state !== lastState){
+      hudState.textContent = state; hudState.classList.toggle('firing', state === 'FIRING');
+      fsmEls.forEach(el => el.classList.toggle('hot', el.dataset.s === state));
+      lastState = state;
+      if (t < 0.5) { shots.splice(0).forEach(s => { scene.remove(s.mesh); scene.remove(s.trail); }); }
+    }
+
+    // fire
+    if (state === 'FIRING' && t - lastShot > 0.16){
+      lastShot = t;
+      const muzzle = MUZZLE.clone(); tilt.localToWorld(muzzle);
+      const mesh = new THREE.Mesh(shotGeo, shotMat); mesh.position.copy(muzzle); scene.add(mesh);
+      const trail = new THREE.Line(new THREE.BufferGeometry().setFromPoints([muzzle.clone(), muzzle.clone()]), trailMat); scene.add(trail);
+      shots.push({mesh, trail, start:muzzle.clone(), v:aimDir.clone().multiplyScalar(SHOT_SPEED), age:0});
+    }
+    if (state !== 'FIRING' && t < lastShot) lastShot = 0;
+    for (let i = shots.length-1; i >= 0; i--){
+      const s = shots[i]; s.age += dt;
+      s.mesh.position.copy(s.start).addScaledVector(s.v, s.age);
+      tmp.copy(s.start).addScaledVector(s.v, Math.max(0, s.age - 0.25));
+      s.trail.geometry.setFromPoints([tmp.clone(), s.mesh.position.clone()]);
+      if (s.mesh.position.distanceTo(target.position) < 1.8){
+        const f = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.5, 24), new THREE.MeshBasicMaterial({color:SIGNAL, transparent:true, side:THREE.DoubleSide}));
+        f.position.copy(s.mesh.position); f.lookAt(camera.position); scene.add(f); flashes.push({m:f, age:0});
+      }
+      if (s.age > 1.6 || s.mesh.position.distanceTo(target.position) < 1.8){ scene.remove(s.mesh); scene.remove(s.trail); shots.splice(i,1); }
+    }
+    for (let i = flashes.length-1; i >= 0; i--){
+      const f = flashes[i]; f.age += dt; f.m.scale.setScalar(1 + f.age*8); f.m.material.opacity = Math.max(0, 1 - f.age*3);
+      if (f.age > 0.35){ scene.remove(f.m); flashes.splice(i,1); }
+    }
+    renderer.render(scene, camera);
+  }
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced){ for (let i=0;i<120;i++) step(5.6/120); return; }
+  let visible = true;
+  if ('IntersectionObserver' in window) new IntersectionObserver(e => { visible = e[0].isIntersecting; }).observe(stage);
+  function loop(now){
+    const dt = Math.max(0, Math.min((now - prev)/1000, 0.05)); prev = now;
+    if (visible) step(dt);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
