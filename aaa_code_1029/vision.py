@@ -5,6 +5,7 @@
 """
 
 import math
+import sys
 
 import cv2
 from ultralytics import YOLO
@@ -13,7 +14,9 @@ from ultralytics import YOLO
 class Camera:
     def __init__(self, camera_index, width, height):
         # Windows 기본 백엔드(MSMF)는 여는 데 수 초 걸리고 해상도 설정을 무시하는 경우가 많아 DirectShow 사용
-        self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        # Windows는 DirectShow가 빠르게 열리고, Mac/Linux는 기본 백엔드 사용
+        backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        self.cap = cv2.VideoCapture(camera_index, backend)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         if not self.cap.isOpened():
