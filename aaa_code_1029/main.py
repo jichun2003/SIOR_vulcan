@@ -11,16 +11,16 @@
 키: q=종료, r=리셋(중앙 복귀+사격 중지), s=현재 원본 프레임 저장, x=취소, 스페이스=신호
 
 사용 예 (Windows, Imp_Window 폴더에서. 포트 번호는 장치 관리자 > 포트(COM & LPT)에서 확인):
-    python main.py --model ..\\checkpoint\\best.pt --camera 0 --port COM3
+    python main.py --model ..\\checkpoint\\best1105_synth.pt --camera 0 --port COM3
 
     # 아두이노 없이 비전/PID 로직만 확인
-    python main.py --model ..\\checkpoint\\best.pt --camera 0 --no-serial
+    python main.py --model ..\\checkpoint\\best1105_synth.pt --camera 0 --no-serial
 
     # 거리/크기별 실험 로그 저장 (근거리/원거리 비교 등)
-    python main.py --model ..\\checkpoint\\best.pt --no-serial --log-csv logs\\near_small.csv
+    python main.py --model ..\\checkpoint\\best1105_synth.pt --no-serial --log-csv logs\\near_small.csv
 
     # 탄도 모델을 연결해 선도각 계산 + 2단계 사격 (2초 연사)
-    python main.py --model ..\\checkpoint\\best.pt --port COM3 --ballistic-json ballistic\\ballistic_model.json --target-width-m 0.03 --fire-duration 2
+    python main.py --model ..\\checkpoint\\best1105_synth.pt --port COM3 --ballistic-json ballistic\\ballistic_model.json --target-width-m 0.03 --fire-duration 2
 """
 
 import argparse
@@ -47,7 +47,8 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--model", default="../checkpoint/best.pt")
+    p.add_argument("--model", default=Config.model_path)
+    p.add_argument("--imgsz", type=int, default=Config.imgsz, help="추론 해상도 (느리면 800 또는 640)")
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=720)
@@ -98,6 +99,7 @@ def build_config(args):
         frame_width=args.width,
         frame_height=args.height,
         conf_threshold=args.conf,
+        imgsz=args.imgsz,
         target_class=args.target_class,
         max_jump_frac=args.max_jump_frac,
         hfov_deg=args.hfov,

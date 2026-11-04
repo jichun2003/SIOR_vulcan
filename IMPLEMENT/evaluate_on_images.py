@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 학습 때와 동일한 조건(imgsz=640, train_and_export.py 기준)으로 dataset/target 폴더의
-사진들에 대해 현재 체크포인트(best.pt)가 표적을 제대로 탐지하는지 검증한다.
+사진들에 대해 현재 체크포인트가 표적을 제대로 탐지하는지 검증한다.
 
 주의: dataset/target 사진은 Roboflow 라벨링에 쓰인 원본 소스 사진이므로 완전한
 홀드아웃(hold-out) 테스트셋은 아니다. 순수한 일반화 성능이 아니라 "학습이 의도대로
@@ -26,7 +26,7 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--model", default="../checkpoint/best.pt")
+    p.add_argument("--model", default="../checkpoint/best1105_synth.pt")
     p.add_argument("--images-dir", default="../dataset/target")
     p.add_argument("--out-dir", default="../dataset/target_eval")
     p.add_argument(
