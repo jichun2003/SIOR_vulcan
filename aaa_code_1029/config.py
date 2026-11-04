@@ -11,7 +11,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     # --- 카메라 / 탐지 ---
-    model_path: str = "../checkpoint/best.pt"
+    model_path: str = "../checkpoint/best1004_retrain.pt"
     camera_index: int = 0
     frame_width: int = 1280
     frame_height: int = 720
