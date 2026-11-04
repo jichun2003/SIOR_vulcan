@@ -28,13 +28,14 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument(
         "--models", nargs="+",
-        default=[str(ROOT / "checkpoint" / "best0928.pt"), str(ROOT / "checkpoint" / "best1004_retrain.pt")],
+        default=[str(ROOT / "checkpoint" / "best1004_retrain.pt"), str(ROOT / "checkpoint" / "best1105_synth.pt")],
         help="비교할 체크포인트들 (2개 이상, 왼쪽부터 순서대로 표시)",
     )
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--conf", type=float, default=0.4, help="main.py 기본값과 동일")
+    p.add_argument("--imgsz", type=int, default=960, help="추론 해상도 (모든 모델에 같은 값 적용, main.py 기본값과 동일)")
     return p.parse_args()
 
 
@@ -79,7 +80,7 @@ def main():
             ok, frame = cap.read()
             if not ok:
                 break
-            results = [m.predict(frame, conf=args.conf, verbose=False)[0] for m in models]
+            results = [m.predict(frame, conf=args.conf, imgsz=args.imgsz, verbose=False)[0] for m in models]
             total += 1
             for i, r in enumerate(results):
                 hits[i] += int(len(r.boxes) > 0)
