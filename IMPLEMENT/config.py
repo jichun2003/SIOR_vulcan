@@ -16,6 +16,7 @@ class Config:
     frame_width: int = 1280
     frame_height: int = 720
     conf_threshold: float = 0.4
+    imgsz: int = 960  # 추론 해상도. 640이면 2m 이상 먼 표적(폭 50px 이하)을 대부분 놓침. 느리면 640~800으로
     target_class: str = "target"
     max_jump_frac: float = 0.35
 

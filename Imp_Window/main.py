@@ -186,7 +186,7 @@ def main():
         print('콘솔에 "shot" 입력 후 엔터 -> 계속 추적하며 조준(선도각) 완료되는 즉시 자동 사격')
 
     camera = Camera(cfg.camera_index, cfg.frame_width, cfg.frame_height)
-    detector = Detector(cfg.model_path, cfg.conf_threshold, cfg.target_class)
+    detector = Detector(cfg.model_path, cfg.conf_threshold, cfg.target_class, cfg.imgsz)
     tracker = TargetTracker(cfg)
     turret = TurretControl(cfg)
 

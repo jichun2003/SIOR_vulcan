@@ -193,7 +193,7 @@ def main():
           f'{cfg.fire_duration_s:.1f}초 사격 / 취소: "cancel" 또는 x 키')
 
     camera = Camera(cfg.camera_index, cfg.frame_width, cfg.frame_height)
-    detector = Detector(cfg.model_path, cfg.conf_threshold, cfg.target_class)
+    detector = Detector(cfg.model_path, cfg.conf_threshold, cfg.target_class, cfg.imgsz)
     tracker = TargetTracker(cfg)
     turret = TurretControl(cfg)
 

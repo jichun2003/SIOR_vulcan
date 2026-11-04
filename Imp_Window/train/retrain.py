@@ -55,6 +55,9 @@ def parse_args():
     p.add_argument("--device", default="0" if torch.cuda.is_available() else "cpu",
                    help="CUDA GPU 번호(0) 또는 cpu. 기본: GPU가 잡히면 0, 아니면 cpu")
     p.add_argument("--workers", type=int, default=4, help="데이터 로더 프로세스 수 (Windows에서 멈추면 0으로)")
+    p.add_argument("--extra-dir", default=None,
+                   help="추가할 YOLO 형식 데이터 폴더(images/{train,val}, labels/{train,val}). 예: make_synthetic.py 결과")
+    p.add_argument("--name", default="retrain", help="결과 이름: runs/<name>_MMDD, checkpoint/bestMMDD_<name>.pt")
     p.add_argument("--prepare-only", action="store_true", help="데이터셋 변환만 하고 학습은 생략")
     return p.parse_args()
 
@@ -217,6 +220,19 @@ def main():
     write_split(val, out_dir, "val")
     shutil.rmtree(out_dir / "_neg_frames", ignore_errors=True)
 
+    if args.extra_dir:
+        extra = Path(args.extra_dir)
+        for split in ("train", "val"):
+            n = 0
+            for kind in ("images", "labels"):
+                src_dir = extra / kind / split
+                if not src_dir.exists():
+                    continue
+                for f in src_dir.iterdir():
+                    shutil.copy2(f, out_dir / kind / split / f.name)
+                    n += kind == "images"
+            print(f"{args.extra_dir} -> {split} {n}장 추가")
+
     data_yaml = out_dir / "data.yaml"
     # 백슬래시 경로가 YAML에서 이스케이프로 해석되지 않도록 / 형식으로 기록
     data_yaml.write_text(
@@ -240,11 +256,11 @@ def main():
         hsv_h=0.02, hsv_s=0.7, hsv_v=0.5,
         degrees=5.0, translate=0.1, scale=0.6,
         fliplr=0.5, mosaic=1.0, mixup=0.1, close_mosaic=15,
-        project=str(ROOT / "runs"), name=f"retrain_{date.today():%m%d}",
+        project=str(ROOT / "runs"), name=f"{args.name}_{date.today():%m%d}",
     )
 
     best = Path(model.trainer.best)
-    dst = ROOT / "checkpoint" / f"best{date.today():%m%d}_retrain.pt"
+    dst = ROOT / "checkpoint" / f"best{date.today():%m%d}_{args.name}.pt"
     shutil.copy2(best, dst)
     print(f"최종 가중치 -> {dst}")
 

@@ -27,13 +27,14 @@ class Camera:
 
 
 class Detector:
-    def __init__(self, model_path, conf_threshold, target_class):
+    def __init__(self, model_path, conf_threshold, target_class, imgsz=640):
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
         self.target_class = target_class or None  # 빈 문자열이면 클래스 필터링 없음
 
     def predict(self, frame):
-        return self.model.predict(frame, conf=self.conf_threshold, verbose=False)[0]
+        return self.model.predict(frame, conf=self.conf_threshold, imgsz=self.imgsz, verbose=False)[0]
 
 
 def pick_target(result, target_class, last_center=None, max_jump_px=None):
