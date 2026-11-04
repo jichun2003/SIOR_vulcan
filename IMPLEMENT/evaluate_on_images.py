@@ -26,7 +26,7 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--model", default="../checkpoint/best1105_synth.pt")
+    p.add_argument("--model", default="../checkpoint/best1105_live.pt")
     p.add_argument("--images-dir", default="../dataset/target")
     p.add_argument("--out-dir", default="../dataset/target_eval")
     p.add_argument(

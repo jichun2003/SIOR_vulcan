@@ -28,7 +28,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument(
         "--models", nargs="+",
-        default=[str(ROOT / "checkpoint" / "best1004_retrain.pt"), str(ROOT / "checkpoint" / "best1105_synth.pt")],
+        default=[str(ROOT / "checkpoint" / "best1004_retrain.pt"), str(ROOT / "checkpoint" / "best1105_synth.pt"), str(ROOT / "checkpoint" / "best1105_live.pt")],
         help="비교할 체크포인트들 (2개 이상, 왼쪽부터 순서대로 표시)",
     )
     p.add_argument("--camera", type=int, default=0)
