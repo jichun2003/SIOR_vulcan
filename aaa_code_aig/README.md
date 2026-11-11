@@ -119,20 +119,46 @@ python tools/make_calib_set.py --out ../dataset/calib_npu --count 300
 > SDK가 TOPST 전용 배포라 공개 문서에 모든 인자가 없다. 스크립트에 `CHECK`로 표시한
 > 인자(`--type`, `--force-output`, 후처리 옵션)는 설치된 SDK의 `--help`로 확인 후 맞출 것.
 
-## 3. 남은 작업
+### 애플리케이션 (양쪽 구조 모두 작성 완료)
 
-보드에서 돌 **애플리케이션**이 아직 없다. 1111의 파이썬 모듈을 C로 옮겨야 하는 분량:
+보드 실측 결과에 따라 어느 쪽으로든 갈 수 있게 두 구조를 다 만들어두었다.
+**한 실행 파일이 `--mode`로 둘 다 지원**하므로 실측 후 옵션만 바꾸면 된다.
 
-| 1111 파이썬 | 줄 수 | AI-G 쪽 대응 | 비고 |
-|---|---|---|---|
-| `vision.py` (Detector) | 104 | `npu_api.h` 호출 + `post_process.c` | 위 numpy 디코드가 기준 |
-| `vision.py` (Camera) | — | `camera_api.c` / V4L2 `/dev/video*` | letterbox 패딩값 114 맞출 것 |
-| `tracking_filter.py` | 256 | α-β 필터 + 서보각 이력 보간 | 순수 수학, 이식 쉬움 |
-| `turret_control.py` | 164 | 속도형 PID + 리밋 | 순수 수학, 이식 쉬움 |
-| `track_target.py` | 106 | 픽셀→각도, 베어링, 단안 거리 | 순수 수학 |
-| `fire_control.py` | 112 | 리드샷 + 사격 트리거 | — |
-| `serial_link.py` | 152 | termios UART (별도 스레드) | 프로토콜은 그대로 (`s2`/`s3`/`v`/`t`/`x`) |
-| `main.py` | 502 | 메인 루프 + 인자 파싱 | 영상 표시는 `/dev/overlay` |
+| 폴더 | 구조 | 내용 |
+|---|---|---|
+| [board_app/](board_app/) | 보드 단독 (`--mode standalone`) | 카메라→NPU→α-β 예측→2자유도 PID→UART. 1111의 제어 모듈을 C로 포팅 |
+| [board_app/](board_app/) | 검출만 (`--mode detect-only`) | 박스를 TCP NDJSON으로 내보냄 |
+| [pc_control/](pc_control/) | PC 제어 | 보드의 JSON을 받아 **1111 파이썬 모듈을 그대로 import해서** 제어 |
+
+1111 → C 포팅 대응표:
+
+| 1111 파이썬 | board_app | 상태 |
+|---|---|---|
+| `config.py` | `aig_config.h` | 현장 실측값 그대로 (단 지연 L은 재측정 필요) |
+| `turret_control.py` RatePID | `pid.c` | 포팅 완료 |
+| `turret_control.py` TurretControl | `turret.c` | 포팅 완료 |
+| `tracking_filter.py` | `tracking_filter.c` | 포팅 완료 (α-β, 서보각 이력 보간, coast) |
+| `vision.py` | `npu_vision.c` | `npu_api`/`camera_api`/`scaler_api` 사용 + `pick_target` |
+| `serial_link.py` | `uart.c` | termios + 백그라운드 스레드, 프로토콜 동일 |
+| `fire_control.py` | `fire.c` | 2단계 신호 상태머신 (선도각 계산은 미포팅) |
+| `main.py` | `main.c` | 메인 루프, 인자, CSV 로그, `--sweep` |
+| `track_target.py` | `main.c`의 픽셀→각도 | 단안 거리/3D는 선도각용이라 제외 |
+
+**검증 (PC에서 실제로 돌린 결과)**
+
+`board_app/test_control.c` — 닫힌 루프 시뮬레이션 (표적 사인파 → 지연 → α-β → 2자유도
+PID → 슬루 제한 서보):
+
+| 조건 | 결과 |
+|---|---|
+| 움직이는 표적 ±25도/4초, L 일치(0.08s) | 오차 RMS **2.05도**, 최대 3.07도 |
+| 같은 표적, L을 0.25s로 잘못 넣음 | RMS **14.65도** (7배) |
+| 정지 표적 | RMS **0.50도** (불감대 0.4도) |
+| 표적 상실 | coast 후 서보 각속도 **0.0 deg/s** |
+
+`board_app/stub/` — 카메라/NPU 가짜 API로 전체 앱을 PC에서 실행, CSV 로그와 JSON 출력
+경로 확인. 그 스텁 보드 앱에 `pc_control/main_aig.py`를 붙여 **end-to-end도 확인**
+(5초간 133프레임 수신, 서보 명령각이 가짜 표적을 따라감).
 
 ### 문서엔 없지만 공개 소스에서 확인된 것
 
@@ -172,6 +198,18 @@ typedef struct { int cnt; enlight_obj_t obj[256]; } enlight_objs_t;  /* MAX_DETE
 - 아두이노가 `/dev/ttyUSB*`로 잡히는지 (보드 단독 구성의 전제)
 - 기존 USB 웹캠이 보드에서 잡히는지 (카메라가 바뀌면 화각 재측정 필요)
 - 보드에 gcc가 있어서 직접 빌드가 되는지
+
+## 3. 남은 작업
+
+1. **보드 실측** (`BOARD_CHECK.md`, `tools/board_check.sh`) → 카메라/UART 디바이스 이름 확정
+2. **모델 변환** (SDK 호스트 필요): `tools/make_calib_set.py` → `tools/convert_npu.sh`
+   → `--type obj`가 되는지 확인 (되면 `post_process.c` 직접 구현 불필요)
+3. **int8 정확도 확인**: 보드 검출 결과를 FP32와 같은 이미지로 비교 (원거리 작은 표적부터 깨진다)
+4. **지연 L 재측정**: `./aig_turret --sweep` → `analyze_log.py --latency`. 위 표의 2번째 줄이
+   이유다. 그 다음 `Kp*L <= 0.75` 기준으로 PID 게인 재조정
+5. 카메라가 바뀌면 화각(`--hfov/--vfov`) 재측정
+6. (선택) 선도각 계산 포팅, `/dev/overlay` 영상 표시
+
 
 ## 4. 참고 문서
 

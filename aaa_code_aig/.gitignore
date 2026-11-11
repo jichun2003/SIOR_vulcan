@@ -3,3 +3,6 @@
 npu_build/
 output_code/
 __pycache__/
+build/
+*.o
+*.csv
