@@ -142,8 +142,12 @@ static inline aig_config_t aig_config_default(void)
     c.d_filter_alpha = 0.3f;
     c.integral_limit_deg_s = 10.0f;
 
-    c.latency_s = 0.25f;        /* NPU에서는 반드시 재측정 */
-    c.latency_tilt_s = 0.265f;
+    /* 1111(Windows + CPU 추론) 실측값은 pan 0.25 / tilt 0.265였지만, NPU 추론은 ~15ms라
+     * L이 훨씬 작다. 아래는 "추론 15ms + 프레임 33ms + 서보 반응"의 어림값이고 실측값이
+     * 아니다. --sweep으로 재측정해서 --latency로 넣을 것.
+     * (test_control 시뮬레이션: 실제 L 0.08s에 0.25s를 넣으면 RMS 2.05 -> 14.65deg) */
+    c.latency_s = 0.12f;
+    c.latency_tilt_s = 0.12f;
     c.ab_alpha = 0.7f;
     c.ab_beta = 0.4f;
     c.ff_deadband_deg_s = 4.0f;

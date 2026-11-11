@@ -1,0 +1,19 @@
+# aaa_code_aig 파이썬 의존성
+#
+# 이 폴더는 aaa_code_1111 없이 단독으로 동작한다. 용도에 따라 필요한 것만 깔면 된다.
+
+# --- pc_control/ (PC 제어형: 보드가 검출, PC가 추적/PID/사격) ---
+# 보드가 추론을 하므로 PC에는 ultralytics/opencv/torch가 필요 없다.
+pyserial>=3.5          # serial_link.py (아두이노)
+numpy>=1.24            # track_target.py, analyze_log.py
+matplotlib>=3.8.0      # analyze_log.py 플롯
+scipy>=1.11.0          # ballistic/lead_solver.py (선도각을 쓸 때만)
+
+# --- tools/ (모델 변환: .pt -> NPU용 ONNX) ---
+# 보드가 아니라 PC(또는 SDK 호스트)에서 한 번만 돌리는 작업.
+# EnlightSDK 호스트는 문서 기준 Ubuntu 20.04 / Python 3.8 / torch 1.12.0+cpu 환경이다.
+# torch>=2.0
+# ultralytics>=8.1.0
+# onnx>=1.14
+# onnxruntime>=1.15   # export_onnx_npu.py --verify 할 때만
+# opencv-python>=4.9  # export_onnx_npu.py --verify-image, make_calib_set.py

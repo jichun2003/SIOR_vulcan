@@ -1,7 +1,26 @@
 # aaa_code_aig — TOPST AI-G 포팅
 
 `aaa_code_1111`(Windows + NVIDIA CUDA + COM 포트 기준 최종 운용 코드)을 TOPST AI-G
-싱글보드컴퓨터로 옮기기 위한 작업 폴더.
+싱글보드컴퓨터로 옮긴 폴더. **이 폴더만 있으면 돌아간다** — 필요한 제어 코드는
+1111에서 복사해왔고, 무엇이 어떻게 바뀌었는지는 `pc_control/README.md`의
+"1111에서 가져온 코드" 표에 있다.
+
+```
+aaa_code_aig/
+  board_app/            보드에서 돌아가는 C 앱 (--mode standalone | detect-only)
+    *.c /*.h            1111 제어 로직의 C 포팅 + NPU/카메라/UART
+    stub/               카메라·NPU 가짜 API (PC에서 배관 확인용)
+    test_control.c      제어 로직 닫힌 루프 시뮬레이션
+  pc_control/           PC 제어형 (보드는 검출만)
+    aig_link.py         보드의 NDJSON 수신 (1111 vision.py 자리)
+    main_aig.py         PC 진입점 (1111 main.py 자리)
+    config.py 외        1111에서 복사한 추적/PID/사격/로그 모듈
+    ballistic/          1111에서 복사 (선도각 계산)
+  tools/                모델 변환 (.pt -> NPU) + 보드 조사 스크립트
+  firmware/             아두이노 펌웨어 (1111에서 복사, 수정 없음)
+  requirements.txt
+  BOARD_CHECK.md        보드 실측 체크리스트
+```
 
 ## 1. 먼저 알아야 할 제약
 

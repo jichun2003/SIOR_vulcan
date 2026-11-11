@@ -8,15 +8,42 @@
 [PC]  aig_link.py -> aaa_code_1111의 추적/PID/사격 통제 그대로 -> pyserial -> 아두이노
 ```
 
-검증이 끝난 `aaa_code_1111`의 제어 코드(`tracking_filter.py`, `turret_control.py`,
-`track_target.py`, `fire_control.py`, `serial_link.py`)를 **복사하지 않고 import해서 쓴다.**
-1111을 고치면 여기도 같이 바뀐다.
+`aaa_code_aig`만 있으면 돌아가도록 `aaa_code_1111`의 제어 코드를 이 폴더로 복사해왔다.
 
 ## 파일
+
+### 새로 만든 것
 
 - `aig_link.py` — 보드의 검출 스트림 수신 (백그라운드 스레드, 끊기면 자동 재접속).
   1111 `vision.py`의 Camera+Detector 자리를 대신하고, `pick_target()`도 같은 규칙으로 제공.
 - `main_aig.py` — PC 쪽 진입점. 1111 `main.py`의 2dof 루프와 같은 구조.
+
+### 1111에서 가져온 코드
+
+| 파일 | 1111과 비교 | 바뀐 내용 |
+|---|---|---|
+| `tracking_filter.py` | **그대로** (바이트 동일) | — |
+| `turret_control.py` | **그대로** | — |
+| `track_target.py` | **그대로** | — |
+| `fire_control.py` | **그대로** | — |
+| `serial_link.py` | **그대로** | — |
+| `analyze_log.py` | **그대로** | — |
+| `ballistic/` 3개 | **그대로** | `lead_solver.py`, `ballistic_model_fit.py`, `ballistic_model.json` |
+| `config.py` | **수정** | 아래 참고 |
+
+`config.py`에서 바뀐 것:
+
+1. **삭제**: `model_path`, `camera_index`, `frame_width`, `frame_height`, `conf_threshold`,
+   `device`, `no_show` — 탐지를 보드가 하므로 PC는 모델도 카메라도 쓰지 않는다. 해상도는
+   보드가 매 프레임 알려주고, 신뢰도 임계값은 보드 실행 옵션(`--conf`)이다.
+   (복사해온 다른 모듈 중 이 항목들을 쓰는 코드는 없다 — 확인 후 삭제)
+2. **추가**: `board_host`, `board_port` — 검출 결과를 받아올 보드 주소.
+3. **변경**: `latency_s` 0.25 → **0.12**, `latency_tilt_s` 0.265 → **0.12**.
+   1111 값은 Windows + CPU 추론 실측값이고, NPU는 추론이 ~15ms라 L이 훨씬 작다.
+   0.12도 **실측값이 아니라 어림값**이라 반드시 재측정해야 한다 (아래 "주의" 참고).
+
+1111에서 **가져오지 않은 것**: `vision.py`(PC가 추론하지 않음), `main.py`(→ `main_aig.py`),
+`evaluate_on_images.py`·`capture_frames.py`·`test_serial.py`·`train/`(학습·점검용, AI-G와 무관).
 
 ## 실행
 
@@ -32,8 +59,9 @@ python main_aig.py --board 192.168.0.100 --no-serial            # 아두이노 �
 python main_aig.py --board 192.168.0.100 --no-serial --log-csv logs/aig.csv
 ```
 
-필요 패키지: `pyserial`, `numpy` (1111의 `track_target.py`가 numpy를 씀). opencv/ultralytics는
-필요 없다 — PC가 추론을 하지 않기 때문.
+필요 패키지: `pyserial`, `numpy` (`track_target.py`가 numpy를 씀). 선도각을 쓸 때만 `scipy`,
+로그 플롯에 `matplotlib`. opencv/ultralytics/torch는 필요 없다 — PC가 추론을 하지 않는다.
+(`../requirements.txt`)
 
 신호는 터미널 입력: `shot`(1번=선도각, 2번=사격) / `cancel` / `r` / `q`
 
@@ -57,6 +85,11 @@ Telechips의 Vision Protocol(RTPM, 포트 9998/9999)을 쓰지 않은 이유: �
   PC 경유라서 보드 단독보다 크다. `--sweep`(보드) 또는 1111의 `--latency-sweep`과
   `analyze_log.py --latency`로 실측해서 넣어야 한다. 틀리면 과보상으로 오차가 몇 배 커진다.
   `--latency`만 주면 tilt는 `config.py` 값이 남으므로 `--latency-tilt`도 같이 주는 게 안전하다.
+  (`test_control` 시뮬레이션: 실제 L이 0.08s인데 0.25s를 넣으면 추종 오차 RMS가
+  2.05도 → 14.65도로 7배가 된다)
+- **보드 단독 모드와 설정이 두 군데 있다**: `config.py`(PC 제어형)와
+  `../board_app/aig_config.h`(보드 단독형)에 같은 값들이 따로 들어있다. 한쪽만 고치면
+  두 모드가 다르게 동작하므로 같이 고칠 것.
 - **통신 끊김과 표적 상실을 구분한다**: 프레임이 안 오는 동안에는 제어를 하지 않는다.
   끊김을 "표적 상실"로 처리하면 포가 멋대로 coast 한다.
 - 화각(`--hfov/--vfov`)은 **보드에 달린 카메라** 기준이다. 1111의 64.0/34.2는 기존 USB

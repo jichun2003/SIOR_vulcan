@@ -3,12 +3,12 @@
 PC 제어형 진입점: AI-G 보드는 NPU 검출만 하고, 추적/PID/사격 통제는 PC에서 한다.
 
   [AI-G 보드] 카메라 -> NPU -> 박스  --TCP JSON-->  [PC] 이 파일
-                                                      -> aaa_code_1111의 추적/PID 그대로
+                                                      -> tracking_filter / turret_control
                                                       -> pyserial로 아두이노
 
-즉 검증이 끝난 aaa_code_1111의 제어 코드(tracking_filter / turret_control / track_target /
-fire_control / serial_link)를 **그대로 import해서 쓴다**. 복사본을 만들지 않으므로
-1111을 고치면 여기도 같이 바뀐다.
+추적/PID/사격 통제 코드는 aaa_code_1111에서 이 폴더로 복사해온 것이다 (aaa_code_aig만
+있으면 돌아가도록). 어떤 파일이 어떻게 바뀌었는지는 README.md의 "1111에서 가져온 코드"
+표에 정리해두었다.
 
 보드 쪽 실행:
     ./aig_turret --mode detect-only --network /home/root/yolov8s_target_quantized --json-port 5000
@@ -29,9 +29,11 @@ import time
 from pathlib import Path
 
 import aig_link
-
-# aaa_code_1111의 모듈을 그대로 쓴다 (복사하지 않음)
-DEFAULT_CODE_DIR = Path(__file__).resolve().parent.parent.parent / "aaa_code_1111"
+from config import Config
+from fire_control import FireControl
+from track_target import TargetTracker
+from tracking_filter import PredictiveTracker
+from turret_control import TurretControl
 
 LOG_FIELDS = [
     "t_mono", "timestamp", "mode", "found", "conf", "bbox_w", "bbox_h",
@@ -46,10 +48,10 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--board", required=True, help="AI-G 보드 IP")
-    p.add_argument("--board-port", type=int, default=5000, help="보드 json-port (기본 5000)")
-    p.add_argument("--code-dir", default=str(DEFAULT_CODE_DIR),
-                   help="제어 모듈을 가져올 폴더 (기본: ../../aaa_code_1111)")
+    p.add_argument("--board", default=Config.board_host,
+                   help=f"AI-G 보드 IP (기본 {Config.board_host}, config.py에서 변경)")
+    p.add_argument("--board-port", type=int, default=Config.board_port,
+                   help=f"보드 json-port (기본 {Config.board_port})")
     p.add_argument("--port", default=None, help="아두이노 시리얼 포트 (예: COM3, /dev/ttyUSB0)")
     p.add_argument("--baud", type=int, default=9600)
     p.add_argument("--no-serial", action="store_true", help="시리얼 없이 추적 로직만")
@@ -97,7 +99,7 @@ class StdinCommandListener:
         return cmds
 
 
-def build_config(args, Config):
+def build_config(args):
     tuning = {
         "kp": args.kp, "ki": args.ki, "kd": args.kd,
         "deadband_deg": args.deadband,
@@ -134,32 +136,19 @@ def _fmt(v):
 def main():
     args = parse_args()
 
-    code_dir = Path(args.code_dir).resolve()
-    if not (code_dir / "tracking_filter.py").is_file():
-        raise SystemExit(
-            f"제어 모듈을 찾을 수 없습니다: {code_dir}\n"
-            "--code-dir로 aaa_code_1111 폴더를 지정하세요"
-        )
-    sys.path.insert(0, str(code_dir))
-
-    from config import Config
-    from fire_control import FireControl
-    from track_target import TargetTracker
-    from tracking_filter import PredictiveTracker
-    from turret_control import TurretControl
-
-    cfg = build_config(args, Config)
-    print(f"[aig] 제어 모듈: {code_dir}")
+    cfg = build_config(args)
+    print(f"[aig] 보드 {args.board}:{args.board_port}에서 검출 결과를 받습니다")
     lt = cfg.latency_tilt_s if cfg.latency_tilt_s is not None else cfg.latency_s
     print(f"[aig] 2dof: L pan={cfg.latency_s:.3f}s tilt={lt:.3f}s, 화각 {cfg.hfov_deg}x{cfg.vfov_deg}, "
           f"Kp={cfg.kp} Ki={cfg.ki} Kd={cfg.kd}, 불감대 {cfg.deadband_deg}deg, "
           f"α={cfg.ab_alpha} β={cfg.ab_beta}")
     if args.latency is not None and args.latency_tilt is None:
-        print(f"[aig] 주의: --latency만 주면 tilt 지연은 config.py 값({cfg.latency_tilt_s})이 그대로 쓰입니다. "
-              "두 축을 같이 쓰려면 --latency-tilt도 주세요")
-    if cfg.latency_s >= 0.2:
-        print("[aig] 주의: L이 0.2s 이상입니다. 보드 NPU는 추론이 ~15ms라 L이 훨씬 작을 것이니 "
-              "--latency로 실측값을 넣으세요 (틀리면 과보상으로 오차가 몇 배 커집니다)")
+        print(f"[aig] 주의: --latency만 주면 tilt 지연은 config.py 값({cfg.latency_tilt_s})이 "
+              "그대로 쓰입니다. 두 축을 같이 쓰려면 --latency-tilt도 주세요")
+    if args.latency is None:
+        print(f"[aig] 주의: 지연 L={cfg.latency_s:.3f}s는 config.py의 어림값이고 실측값이 아닙니다. "
+              "analyze_log.py --latency로 재서 --latency로 넣으세요 "
+              "(틀리면 과보상으로 추종 오차가 몇 배 커집니다)")
 
     link = aig_link.AigDetectionLink(args.board, args.board_port,
                                      target_class=0, class_names=(args.target_class or "target",))
