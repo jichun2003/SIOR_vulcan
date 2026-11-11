@@ -83,7 +83,8 @@ def parse_args():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("--model", default="best1105_live.pt")
-    p.add_argument("--camera", type=int, default=1)
+    # 외장 USB 카메라 번호: Windows는 1(0=노트북 내장), Mac은 0(1=내장, 2=아이폰 연속성 카메라)
+    p.add_argument("--camera", type=int, default=0 if sys.platform == "darwin" else 1)
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--conf", type=float, default=0.4)
