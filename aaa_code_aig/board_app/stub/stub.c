@@ -34,6 +34,44 @@ static double stub_now(void)
 static int    g_cam_dummy;
 static double g_t0;
 static unsigned char *g_frame;
+static uint32_t g_fw, g_fh;
+
+/* 가짜 NPU 탐지와 같은 궤적 (NN 좌표). 카메라 그림과 박스가 겹쳐 보이도록 공유 */
+static void stub_target_nn(double t, double *cx, double *cy)
+{
+    *cx = STUB_NN_W / 2.0 + 200.0 * sin(2.0 * 3.14159265 * t / 4.0);
+    *cy = STUB_NN_H / 2.0 + 15.0 * sin(2.0 * 3.14159265 * t / 7.0);
+}
+
+/* 미리보기 확인용 가짜 화면: 어두운 격자 배경 + 회색 표적 사각형 */
+static void stub_draw_frame(void)
+{
+    double cx, cy;
+    long x0, x1, y0, y1;
+
+    if (g_frame == NULL) {
+        return;
+    }
+    stub_target_nn(stub_now() - g_t0, &cx, &cy);
+    cx *= (double)g_fw / STUB_NN_W;
+    cy *= (double)g_fh / STUB_NN_H;
+    x0 = (long)(cx - 20.0 * g_fw / STUB_NN_W);
+    x1 = (long)(cx + 20.0 * g_fw / STUB_NN_W);
+    y0 = (long)(cy - 15.0 * g_fh / STUB_NN_H);
+    y1 = (long)(cy + 15.0 * g_fh / STUB_NN_H);
+    for (uint32_t y = 0; y < g_fh; y++) {
+        unsigned char *row = g_frame + (size_t)y * g_fw * 3u;
+        for (uint32_t x = 0; x < g_fw; x++) {
+            unsigned char v = ((x / 80u + y / 80u) % 2u) ? 40 : 60;
+            if ((long)x >= x0 && (long)x < x1 && (long)y >= y0 && (long)y < y1) {
+                v = 170;
+            }
+            row[3u * x] = v;
+            row[3u * x + 1u] = v;
+            row[3u * x + 2u] = (unsigned char)(v + 10);
+        }
+    }
+}
 
 int32_t CameraCreate(CameraHandle *pHandle)
 {
@@ -58,6 +96,8 @@ int32_t CameraSetConfig(CameraHandle handle, uint32_t width, uint32_t height)
     (void)handle;
     free(g_frame);
     g_frame = (unsigned char *)calloc((size_t)width * height * 3u, 1u);
+    g_fw = width;
+    g_fh = height;
     printf("[stub] 카메라 설정(가짜): %ux%u\n", width, height);
     return 0;
 }
@@ -67,6 +107,7 @@ int32_t CameraGetBuffer(CameraHandle handle, uint8_t **virtualAddr, uint64_t *ba
     (void)handle;
     /* 실제 카메라의 프레임 간격(30fps)을 흉내내서 루프가 너무 빨리 돌지 않게 */
     usleep(33 * 1000);
+    stub_draw_frame();
     *virtualAddr = g_frame;
     *baseOffset = (uint64_t)(uintptr_t)g_frame;
     return 0;
@@ -155,9 +196,10 @@ int network_run_postprocess(npu_net_t *net, npu_buf_t *out, void *result)
     enlight_objs_t *objs = (enlight_objs_t *)result;
     double t = stub_now() - g_t0;
     /* 좌우 왕복 (주기 4초, NN 좌표 중앙 ±200px) + 세로는 약간만 흔들림 */
-    double cx = STUB_NN_W / 2.0 + 200.0 * sin(2.0 * 3.14159265 * t / 4.0);
-    double cy = STUB_NN_H / 2.0 + 15.0 * sin(2.0 * 3.14159265 * t / 7.0);
+    double cx, cy;
     double w = 40.0, h = 30.0;
+
+    stub_target_nn(t, &cx, &cy);
 
     (void)net; (void)out;
     memset(objs, 0, sizeof(*objs));

@@ -60,6 +60,10 @@ tcnncameraapp -p /dev/video0          # 화면에 영상 나오는지 (DSI 디�
 
 ## 5. 탐지 데모 (카메라 → 화면)
 
+PC에서 보려면 (보드에 모니터가 없을 때): 우리 앱을 `--preview-port 5001`로 실행하고
+PC에서 `python3 pc_control/view_aig.py --board <보드IP>`. 색이 뒤바뀌면 `c` 키,
+화면이 깨지면 카메라 버퍼 형식(RGB/YUV) <- **기록**
+
 ```sh
 ls /dev/overlay                       # 출력 노드
 tcnnapp -i camera -o display -n /usr/share/yolov8s_quantized/ -p /dev/video0 \

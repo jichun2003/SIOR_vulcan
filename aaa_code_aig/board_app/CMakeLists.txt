@@ -24,8 +24,20 @@ add_executable(aig_turret
     npu_vision.c
     uart.c
     json_out.c
+    preview_out.c
     ${CONTROL_SRC}
 )
+
+# PC 미리보기 영상 JPEG 압축 (--preview-port). libjpeg(-turbo)가 없으면 원시 RGB로 보낸다.
+find_package(JPEG QUIET)
+if(JPEG_FOUND)
+    target_include_directories(aig_turret PRIVATE ${JPEG_INCLUDE_DIRS})
+    target_link_libraries(aig_turret PRIVATE ${JPEG_LIBRARIES})
+    target_compile_definitions(aig_turret PRIVATE AIG_HAVE_JPEG=1)
+    message(STATUS "AI-G: 미리보기 JPEG 압축 사용 (${JPEG_LIBRARIES})")
+else()
+    message(STATUS "AI-G: libjpeg 없음 -> 미리보기는 원시 RGB (--preview-scale 4 권장)")
+endif()
 
 if(AIG_STUB_NPU)
     target_sources(aig_turret PRIVATE stub/stub.c)

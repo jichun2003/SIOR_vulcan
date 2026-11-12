@@ -21,6 +21,7 @@
 | `uart.c/.h` | `serial_link.py` | termios UART, 백그라운드 스레드, 같은 프로토콜 |
 | `fire.c/.h` | `fire_control.py` | 2단계 신호 상태머신 |
 | `json_out.c/.h` | — | detect-only 모드의 TCP NDJSON 서버 |
+| `preview_out.c/.h` | — | PC 미리보기 영상 TCP 서버 (`--preview-port`, JPEG 또는 원시 RGB) |
 | `main.c` | `main.py` | 인자 파싱, 메인 루프, 로그 |
 | `test_control.c` | — | 제어 로직 닫힌 루프 시뮬레이션 (PC에서 실행) |
 | `stub/` | — | 카메라/NPU 가짜 API (PC에서 배관 확인용) |
@@ -73,6 +74,31 @@ scp aig_turret root@<보드IP>:/home/root/
 ```
 
 신호는 표준입력에 한 줄: `shot`(1번=선도각, 2번=사격) / `cancel` / `r`(리셋) / `q`(종료)
+
+### PC에서 보드 카메라 화면 보기 (`--preview-port`)
+
+두 모드 어디에든 `--preview-port 5001`을 붙이면 보드가 카메라 프레임을 줄여서(기본 1/2,
+1280x720 -> 640x360) 탐지 박스·서보각·사격 상태와 함께 TCP로 보낸다. PC에서는
+`pc_control/view_aig.py`로 본다 (Mac/Windows, opencv만 필요).
+
+```sh
+# 보드
+./aig_turret --network /home/root/yolov8s_target_quantized --port /dev/ttyUSB0 --preview-port 5001
+# PC
+python3 view_aig.py --board <보드IP> --port 5001
+```
+
+- 보낼 클라이언트가 없으면 프레임 복사도 하지 않는다 (추적 루프 부담 0)
+- 받는 쪽이 느리면 프레임을 건너뛴다 (추적 루프는 절대 기다리지 않음)
+- `--preview-fps`(기본 10), `--preview-scale`(기본 2), `--preview-quality`(기본 70)
+- CMake가 libjpeg를 찾으면 JPEG(640x360 약 30~50KB), 없으면 원시 RGB(약 690KB)라
+  무선이면 `--preview-scale 4 --preview-fps 5` 정도로 낮출 것
+- 카메라 버퍼를 RGB888로 가정한다 (`npu_vision.c`가 스케일러에 넘기는 형식과 같다).
+  PC 화면에서 빨강/파랑이 바뀌어 보이면 `view_aig.py --swap-rb`(또는 `c` 키),
+  화면이 줄무늬/깨짐이면 버퍼가 YUV라는 뜻이니 알려줄 것 (변환 추가 필요)
+
+PC 스텁 빌드로 확인한 것: 박스 위치와 영상 속 표적 위치 일치, 요청 fps 10/15 그대로 수신,
+루프 fps보다 높게 요청하면 루프 fps로 상한, detect-only JSON(포트 5000)과 동시 사용 가능.
 
 ## 검증 결과 (PC 시뮬레이션)
 

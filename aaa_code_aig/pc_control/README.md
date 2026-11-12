@@ -17,6 +17,8 @@
 - `aig_link.py` — 보드의 검출 스트림 수신 (백그라운드 스레드, 끊기면 자동 재접속).
   1111 `vision.py`의 Camera+Detector 자리를 대신하고, `pick_target()`도 같은 규칙으로 제공.
 - `main_aig.py` — PC 쪽 진입점. 1111 `main.py`의 2dof 루프와 같은 구조.
+- `view_aig.py` — 보드 카메라 화면 실시간 보기 (보드 `--preview-port`). 탐지 박스 + 서보각 +
+  사격 상태 오버레이, `s` 키로 원본 프레임 저장(재학습용). 제어와 무관해서 아무 때나 켜고 끌 수 있다.
 
 ### 1111에서 가져온 코드
 
@@ -64,6 +66,15 @@ python main_aig.py --board 192.168.0.100 --no-serial --log-csv logs/aig.csv
 (`../requirements.txt`)
 
 신호는 터미널 입력: `shot`(1번=선도각, 2번=사격) / `cancel` / `r` / `q`
+
+### 보드 카메라 화면 보기
+
+보드 실행 명령에 `--preview-port 5001`을 붙이고 (standalone/detect-only 둘 다 됨):
+```sh
+python3 view_aig.py --board 192.168.0.100              # 기본 포트 5001
+python3 view_aig.py --board 192.168.0.100 --zoom 2     # 창 크게
+```
+`main_aig.py`와 동시에 띄워도 된다 (포트가 다름). 이건 opencv-python이 필요하다.
 
 ## 보드가 보내는 줄 형식
 

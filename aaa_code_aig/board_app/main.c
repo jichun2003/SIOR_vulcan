@@ -33,6 +33,7 @@
 #include "fire.h"
 #include "json_out.h"
 #include "npu_vision.h"
+#include "preview_out.h"
 #include "tracking_filter.h"
 #include "turret.h"
 #include "uart.h"
@@ -65,6 +66,10 @@ static void usage(const char *prog)
         "  --port <dev>          아두이노 시리얼 (기본 /dev/ttyUSB0)\n"
         "  --no-serial           시리얼 없이 추적 로직만\n"
         "  --json-port <n>       detect-only에서 열 TCP 포트 (기본 5000)\n"
+        "  --preview-port <n>    PC 미리보기 영상 포트 (기본 0=끔, 예 5001). PC: view_aig.py\n"
+        "  --preview-scale <n>   영상을 1/n로 줄여 보냄 (기본 2)\n"
+        "  --preview-fps <f>     영상 최대 fps (기본 10)\n"
+        "  --preview-quality <n> JPEG 품질 (기본 70)\n"
         "  --hfov/--vfov <deg>   화각 (기본 64.0 / 34.2)\n"
         "  --kp/--ki/--kd <f>    PID 게인\n"
         "  --deadband <deg> --max-rate <deg/s> --err-filter <0~1>\n"
@@ -84,7 +89,8 @@ enum {
     OPT_DEADBAND, OPT_MAX_RATE, OPT_ERR_FILTER, OPT_LATENCY, OPT_LATENCY_TILT,
     OPT_AB_ALPHA, OPT_AB_BETA, OPT_PAN_SIGN, OPT_TILT_SIGN, OPT_FIRE_DURATION,
     OPT_MOTOR_SPEED, OPT_LOG_CSV, OPT_SWEEP, OPT_SWEEP_AXIS, OPT_SWEEP_AMP,
-    OPT_SWEEP_PERIOD, OPT_TARGET_CLASS, OPT_MAX_JUMP
+    OPT_SWEEP_PERIOD, OPT_TARGET_CLASS, OPT_MAX_JUMP,
+    OPT_PREVIEW_PORT, OPT_PREVIEW_SCALE, OPT_PREVIEW_FPS, OPT_PREVIEW_QUALITY
 };
 
 static int parse_args(int argc, char **argv, aig_config_t *cfg)
@@ -100,6 +106,10 @@ static int parse_args(int argc, char **argv, aig_config_t *cfg)
         {"port",          required_argument, NULL, OPT_PORT},
         {"no-serial",     no_argument,       NULL, OPT_NO_SERIAL},
         {"json-port",     required_argument, NULL, OPT_JSON_PORT},
+        {"preview-port",  required_argument, NULL, OPT_PREVIEW_PORT},
+        {"preview-scale", required_argument, NULL, OPT_PREVIEW_SCALE},
+        {"preview-fps",   required_argument, NULL, OPT_PREVIEW_FPS},
+        {"preview-quality", required_argument, NULL, OPT_PREVIEW_QUALITY},
         {"hfov",          required_argument, NULL, OPT_HFOV},
         {"vfov",          required_argument, NULL, OPT_VFOV},
         {"kp",            required_argument, NULL, OPT_KP},
@@ -152,6 +162,10 @@ static int parse_args(int argc, char **argv, aig_config_t *cfg)
         case OPT_PORT:          cfg->serial_dev = optarg; break;
         case OPT_NO_SERIAL:     cfg->serial_dev = NULL; break;
         case OPT_JSON_PORT:     cfg->json_port = atoi(optarg); break;
+        case OPT_PREVIEW_PORT:  cfg->preview_port = atoi(optarg); break;
+        case OPT_PREVIEW_SCALE: cfg->preview_scale = atoi(optarg); break;
+        case OPT_PREVIEW_FPS:   cfg->preview_fps = (float)atof(optarg); break;
+        case OPT_PREVIEW_QUALITY: cfg->preview_quality = atoi(optarg); break;
         case OPT_HFOV:          cfg->hfov_deg = (float)atof(optarg); break;
         case OPT_VFOV:          cfg->vfov_deg = (float)atof(optarg); break;
         case OPT_KP:            cfg->kp = (float)atof(optarg); break;
@@ -221,8 +235,11 @@ int main(int argc, char **argv)
     aig_fire_t fire;
     aig_uart_t uart;
     aig_json_server_t json_srv;
+    aig_preview_server_t preview_srv;
     bool uart_ok = false;
     bool json_ok = false;
+    bool preview_ok = false;
+    double next_preview = 0.0;
     FILE *log_fp = NULL;
     aig_det_t dets[AIG_MAX_DETS];
     float last_center[2];
@@ -283,6 +300,20 @@ int main(int argc, char **argv)
         aig_uart_send_angles(&uart, turret.pan_angle, turret.tilt_angle);  /* 시작 시 중앙 */
     }
 
+    if (cfg.preview_port > 0) {
+        if (cfg.preview_scale < 1) {
+            cfg.preview_scale = 1;
+        }
+        if (aig_preview_open(&preview_srv, cfg.preview_port, cfg.preview_quality) == 0) {
+            preview_ok = true;
+            printf("[preview] %ux%u, 최대 %.0ffps. PC에서: python view_aig.py --board <보드IP> --port %d\n",
+                   cfg.frame_width / (uint32_t)cfg.preview_scale,
+                   cfg.frame_height / (uint32_t)cfg.preview_scale, cfg.preview_fps, cfg.preview_port);
+        } else {
+            printf("[preview] 미리보기 서버를 열지 못해 영상 없이 계속합니다\n");
+        }
+    }
+
     if (cfg.log_csv != NULL) {
         log_fp = fopen(cfg.log_csv, "w");
         if (log_fp == NULL) {
@@ -303,6 +334,16 @@ int main(int argc, char **argv)
         aig_track_info_t info;
         const aig_det_t *tgt = NULL;
         char cmd[64];
+
+        /* 미리보기를 볼 클라이언트가 있고 fps 제한 안이면 이번 캡처에서 프레임을 복사해 둔다 */
+        if (preview_ok) {
+            aig_preview_poll(&preview_srv);
+            /* 캡처 시각은 지금보다 약 한 프레임 뒤이므로 반 프레임 앞당겨 판단 */
+            double half_frame = fps > 1.0f ? 0.5 / fps : 0.0;
+            if (aig_preview_wants_frame(&preview_srv) && monotonic_now() + half_frame >= next_preview) {
+                aig_vision_request_preview(vision, cfg.preview_scale);
+            }
+        }
 
         if (aig_vision_capture_detect(vision, dets, AIG_MAX_DETS, &n_dets, &infer_ms) != 0) {
             continue;
@@ -433,6 +474,39 @@ int main(int argc, char **argv)
                     infer_ms, aig_fire_state_name(&fire), cfg.hfov_deg, cfg.vfov_deg);
         }
 
+        /* --- PC 미리보기 영상 (제어가 끝난 뒤라 이번 프레임의 서보각/사격 상태가 같이 간다) --- */
+        if (preview_ok) {
+            uint32_t pw = 0, ph = 0;
+            const uint8_t *img = aig_vision_preview(vision, &pw, &ph);
+            if (img != NULL) {
+                char meta[2560];
+                int off = snprintf(meta, sizeof(meta),
+                                   "{\"t\":%.6f,\"frame_w\":%u,\"frame_h\":%u,\"img_w\":%u,\"img_h\":%u,"
+                                   "\"infer_ms\":%.2f,\"fps\":%.1f,\"mode\":\"%s\",\"fire\":\"%s\","
+                                   "\"pan\":%.2f,\"tilt\":%.2f,\"dets\":[",
+                                   now, cfg.frame_width, cfg.frame_height, pw, ph, infer_ms, fps,
+                                   cfg.sweep ? "sweep"
+                                             : (cfg.run_mode == AIG_MODE_DETECT_ONLY ? "detect-only" : "standalone"),
+                                   aig_fire_state_name(&fire), turret.pan_angle, turret.tilt_angle);
+                for (int i = 0; i < n_dets && off > 0 && off < (int)sizeof(meta) - 128; i++) {
+                    off += snprintf(meta + off, sizeof(meta) - (size_t)off,
+                                    "%s{\"cls\":%d,\"conf\":%.4f,\"x1\":%.1f,\"y1\":%.1f,"
+                                    "\"x2\":%.1f,\"y2\":%.1f}",
+                                    i ? "," : "", dets[i].cls, dets[i].conf,
+                                    dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2);
+                }
+                if (off > 0 && off < (int)sizeof(meta) - 32) {
+                    snprintf(meta + off, sizeof(meta) - (size_t)off, "],\"best\":%d}", best);
+                    aig_preview_send(&preview_srv, meta, img, pw, ph);
+                }
+                {
+                    /* 간격을 누적해서 잡는다 (now+간격으로 하면 다음 캡처 시점까지 밀려 fps가 낮아짐) */
+                    double period = cfg.preview_fps > 0.0f ? 1.0 / cfg.preview_fps : 0.0;
+                    next_preview = (now - next_preview > period) ? now : next_preview + period;
+                }
+            }
+        }
+
         /* --- FPS / 상태 출력 --- */
         dt = now - prev_time;
         prev_time = now;
@@ -463,6 +537,9 @@ int main(int argc, char **argv)
     }
     if (json_ok) {
         aig_json_close(&json_srv);
+    }
+    if (preview_ok) {
+        aig_preview_close(&preview_srv);
     }
     if (log_fp != NULL) {
         fclose(log_fp);

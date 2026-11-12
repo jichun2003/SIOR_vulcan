@@ -42,6 +42,12 @@ void          aig_vision_close(aig_vision_t *v);
 int aig_vision_capture_detect(aig_vision_t *v, aig_det_t *dets, int max_dets,
                               int *n_dets, float *infer_ms);
 
+/* PC 미리보기용: 다음 aig_vision_capture_detect() 때 카메라 프레임을 1/step로 줄여 복사해 둔다.
+ * (카메라 버퍼는 캡처 함수 안에서 반납되므로 그 전에 복사해야 한다) */
+void aig_vision_request_preview(aig_vision_t *v, int step);
+/* 직전 캡처에서 복사된 미리보기(RGB24). 요청하지 않았으면 NULL */
+const uint8_t *aig_vision_preview(const aig_vision_t *v, uint32_t *w, uint32_t *h);
+
 /* NPU 입력 해상도 (로그/디버그용) */
 void aig_vision_input_size(const aig_vision_t *v, uint32_t *w, uint32_t *h);
 

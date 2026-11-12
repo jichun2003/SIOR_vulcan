@@ -93,6 +93,10 @@ typedef struct {
     /* --- 출력 --- */
     aig_run_mode_t run_mode;
     int         json_port;      /* AIG_MODE_DETECT_ONLY에서 열 TCP 포트 */
+    int         preview_port;   /* PC 미리보기 영상 TCP 포트 (0 = 끔). 두 모드 모두 사용 가능 */
+    int         preview_scale;  /* 카메라 프레임을 1/n로 줄여 보냄 (2: 1280x720 -> 640x360) */
+    float       preview_fps;    /* 미리보기 최대 프레임률 (추적 루프보다 낮게) */
+    int         preview_quality;/* JPEG 품질 1~100 (libjpeg 있을 때) */
     const char *log_csv;        /* 프레임별 로그 (analyze_log.py로 읽을 수 있는 형식) */
     bool        verbose;
 
@@ -165,6 +169,10 @@ static inline aig_config_t aig_config_default(void)
 
     c.run_mode = AIG_MODE_STANDALONE;
     c.json_port = 5000;
+    c.preview_port = 0;
+    c.preview_scale = 2;
+    c.preview_fps = 10.0f;
+    c.preview_quality = 70;
     c.log_csv = NULL;
     c.verbose = false;
 

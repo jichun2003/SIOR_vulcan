@@ -34,7 +34,68 @@ struct aig_vision {
     uint32_t net_h;
 
     enlight_objs_t objs;
+
+    /* PC 미리보기 (aig_vision_request_preview) */
+    int      preview_step;      /* 0 = 이번 프레임은 복사 안 함 */
+    bool     preview_ready;
+    uint8_t *preview;
+    size_t   preview_cap;
+    uint32_t preview_w, preview_h;
 };
+
+/* 카메라 RGB888 프레임을 step 간격으로 솎아 복사 (보간 없음, 1280x720 -> 640x360이면
+ * 약 0.7MB 읽기라 보드 CPU로도 1ms 안팎) */
+static void copy_preview(aig_vision_t *v, const uint8_t *src)
+{
+    const aig_config_t *cfg = v->cfg;
+    uint32_t step = (uint32_t)v->preview_step;
+    uint32_t w = cfg->frame_width / step;
+    uint32_t h = cfg->frame_height / step;
+    size_t need = (size_t)w * h * 3u;
+    size_t src_stride = (size_t)cfg->frame_width * 3u;
+
+    if (need > v->preview_cap) {
+        uint8_t *nb = (uint8_t *)realloc(v->preview, need);
+        if (nb == NULL) {
+            return;
+        }
+        v->preview = nb;
+        v->preview_cap = need;
+    }
+    for (uint32_t y = 0; y < h; y++) {
+        const uint8_t *row = src + (size_t)y * step * src_stride;
+        uint8_t *dst = v->preview + (size_t)y * w * 3u;
+        if (step == 1u) {
+            memcpy(dst, row, (size_t)w * 3u);
+            continue;
+        }
+        for (uint32_t x = 0; x < w; x++) {
+            const uint8_t *p = row + (size_t)x * step * 3u;
+            dst[0] = p[0];
+            dst[1] = p[1];
+            dst[2] = p[2];
+            dst += 3;
+        }
+    }
+    v->preview_w = w;
+    v->preview_h = h;
+    v->preview_ready = true;
+}
+
+void aig_vision_request_preview(aig_vision_t *v, int step)
+{
+    v->preview_step = step < 1 ? 1 : step;
+}
+
+const uint8_t *aig_vision_preview(const aig_vision_t *v, uint32_t *w, uint32_t *h)
+{
+    if (!v->preview_ready) {
+        return NULL;
+    }
+    *w = v->preview_w;
+    *h = v->preview_h;
+    return v->preview;
+}
 
 /* RGB24 입력은 폭이 16의 배수여야 한다 (tc-nn-app의 alignInputDataWidth와 동일) */
 static uint32_t align_up(uint32_t v, uint32_t multiple)
@@ -158,6 +219,7 @@ void aig_vision_close(aig_vision_t *v)
         CameraCloseDevice(v->camera);
         CameraDestroy(v->camera);
     }
+    free(v->preview);
     free(v);
 }
 
@@ -185,10 +247,15 @@ int aig_vision_capture_detect(aig_vision_t *v, aig_det_t *dets, int max_dets,
     float sx, sy, offx, offy;
 
     *n_dets = 0;
+    v->preview_ready = false;
 
     if (CameraGetBuffer(v->camera, &virt, &phys) != 0) {
         fprintf(stderr, "[vision] CameraGetBuffer 실패\n");
         return -1;
+    }
+    if (v->preview_step > 0 && virt != NULL) {
+        copy_preview(v, virt);
+        v->preview_step = 0;
     }
 
     src.pmap = phys;
