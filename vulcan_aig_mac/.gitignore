@@ -1,0 +1,15 @@
+# Telechips 비공개 SDK 소스·헤더 (공개 저장소에 올리지 않음 — README_실행.md 주의 참고)
+tc-nn-app/
+npu_include/
+
+# NPU 모델 바이너리 (용량 큼, 보드로 scp 하는 산출물)
+*_s16_quantized/
+*_quantized/
+
+# 변환 중간물 / 빌드 산출물
+work/
+*.onnx
+calib_npu/
+board_app/build/
+perception.csv
+tools/docker/requirements.txt
