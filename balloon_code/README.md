@@ -20,20 +20,27 @@ cd balloon_code
 pip install -r requirements.txt     # ultralytics, opencv, roboflow 등
 ```
 
-## 1. 첫 풍선 가중치 만들기 (`balloon.pt`)
-바로 받아 쓸 수 있는 "풍선 전용" 공개 `.pt`는 사실상 없다. 기본 YOLOv8은 COCO 학습이라
-balloon 클래스가 없고, Roboflow Universe엔 풍선 **데이터셋**은 많지만 학습된 가중치는
-내려받을 수 없다. 그래서 데이터셋을 받아 한 번 파인튜닝한다 (기존 재학습 흐름과 동일).
+## 1. 첫 풍선 가중치 (`balloon.pt`) — 이미 포함됨
+`balloon.pt`는 **이미 학습해 폴더에 넣어뒀다**. 바로 2단계로 가서 실행하면 된다.
+(공개 Matterport 풍선 데이터셋 train 61/val 13장으로 yolov8s 파인튜닝,
+ val mAP50 0.84 / mAP50-95 0.67 / P 0.85 / R 0.78, 클래스명 `balloon`)
 
+> 왜 직접 학습? 바로 받아 쓸 "풍선 전용" 공개 `.pt`가 사실상 없다. 기본 YOLOv8은 COCO라
+> balloon 클래스가 없고, Roboflow Universe엔 풍선 **데이터셋**은 많지만 학습된 가중치는
+> 내려받을 수 없다. 그래서 데이터셋을 받아 한 번 파인튜닝한 것.
+
+다시 만들거나 다른 데이터셋으로 바꾸고 싶을 때만:
 ```bash
-# Roboflow 무료 가입 > Settings > API Key 복사
+# (A) API 키 불필요 — 지금 balloon.pt를 만든 방식 (Matterport 자동 다운로드+변환)
+python3 train/prepare_matterport.py --out dataset_matterport
+python3 train/train_balloon.py --data dataset_matterport/data.yaml --model ../yolov8s.pt
+
+# (B) Roboflow Universe 데이터셋으로 (키 필요, 보통 더 큼/다양함)
 export ROBOFLOW_API_KEY=xxxxxxxx          # Windows: set ROBOFLOW_API_KEY=xxxxxxxx
-python3 train/train_balloon.py            # 기본 공개 풍선 데이터셋 다운로드 + 학습 -> balloon.pt
+python3 train/train_balloon.py            # 기본 데이터셋 다운로드 + 학습 -> balloon.pt
+#   다른 데이터셋: 그 페이지의 rf.workspace("WS").project("PROJECT").version(N) 값을
+#   --ws/--project/--version 으로 전달
 ```
-- 다른 데이터셋을 쓰려면: Universe에서 "balloon" 데이터셋을 고르고 그 페이지의
-  `rf.workspace("WS").project("PROJECT").version(N)` 값을 `--ws/--project/--version`으로 전달.
-- **API 키 없이**: Universe에서 YOLOv8 zip을 수동으로 받아 압축을 푼 뒤
-  `python3 train/train_balloon.py --data /경로/data.yaml`.
 
 ## 2. 실행 (풍선 추적)
 ```bash
