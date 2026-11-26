@@ -1,0 +1,5 @@
+# 학습 중간 산출물 / 실험 캡처 (용량이 커서 깃에 올리지 않음)
+dataset_roboflow/
+captures/
+logs/*.csv
+*_prev.pt
